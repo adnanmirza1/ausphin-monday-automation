@@ -1,26 +1,86 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ── Oswin Work OS design tokens ─────────────────────────────
+   Palette carried over from the workflow blueprint.            */
+@theme {
+  --color-ink: #141b26;
+  --color-body: #3f4a59;
+  --color-muted: #8792a2;
+  --color-hair: #e2e6ec;
+  --color-surface: #ffffff;
+  --color-canvas: #f4f6f9;
+  --color-rail: #1c2532;
+  --color-rail-hover: #283344;
+
+  --color-teal: #0b7a6f;
+  --color-teal-deep: #075e55;
+  --color-steel: #5b7a99;
+  --color-amber: #c67a1e;
+  --color-grass: #2e9c63;
+  --color-danger: #c0392b;
+
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+* {
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-canvas);
+  color: var(--color-body);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* thin, unobtrusive scrollbars for the board area */
+.scroll-thin::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #cbd2db;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.scroll-thin::-webkit-scrollbar-thumb:hover {
+  background: #aeb7c2;
+  background-clip: content-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-teal);
+  outline-offset: 1px;
+}
+
+/* soft elevation used on cards / popovers */
+.shadow-soft {
+  box-shadow: 0 1px 2px rgba(20, 27, 38, 0.04), 0 1px 3px rgba(20, 27, 38, 0.06);
+}
+.shadow-pop {
+  box-shadow: 0 4px 12px rgba(20, 27, 38, 0.1), 0 2px 4px rgba(20, 27, 38, 0.06);
+}
+
+/* entrance animation for cards/rows */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .animate-rise {
+    animation: rise 0.35s ease both;
+  }
 }

@@ -1,0 +1,500 @@
+<style>
+  :root {
+    --ground: #EEF1F4;
+    --card: #FFFFFF;
+    --ink: #141B26;
+    --body: #4B5666;
+    --muted: #8792A2;
+    --hair: #DCE1E8;
+    --teal: #0B7A6F;
+    --teal-deep: #075E55;
+    --teal-wash: #E4F1EF;
+    --steel: #5B7A99;
+    --steel-wash: #E9EEF4;
+    --amber: #C67A1E;
+    --amber-wash: #FaF0E1;
+    --green: #2E9C63;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--body);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  /* ---------- eyebrow / labels ---------- */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 12px;
+  }
+
+  h1, h2, h3 { color: var(--ink); text-wrap: balance; }
+
+  h2 {
+    font-size: clamp(24px, 3.2vw, 34px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin: 0 0 8px;
+  }
+
+  .lead { font-size: 17px; max-width: 62ch; margin: 0 0 8px; }
+
+  /* ---------- hero ---------- */
+  .hero {
+    padding: 84px 0 56px;
+    border-bottom: 1px solid var(--hair);
+  }
+  .hero h1 {
+    font-size: clamp(34px, 6vw, 60px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.02;
+    margin: 0 0 20px;
+  }
+  .hero h1 .accent { color: var(--teal); }
+  .hero p { font-size: 19px; max-width: 60ch; margin: 0 0 28px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 22px; padding: 0; margin: 0; list-style: none; }
+  .legend li {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    letter-spacing: 0.02em;
+    color: var(--ink);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .dot.steel { background: var(--steel); }
+  .dot.teal { background: var(--teal); }
+  .dot.amber { background: var(--amber); }
+  .dot.green { background: var(--green); }
+
+  section { padding-top: 72px; }
+  .sec-head { margin-bottom: 34px; }
+
+  /* ---------- pipeline ---------- */
+  .pipe { display: grid; gap: 0; }
+  .stage {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    gap: 20px;
+    position: relative;
+  }
+  .rail { display: flex; flex-direction: column; align-items: center; }
+  .node {
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--card);
+    border: 2px solid var(--teal);
+    color: var(--teal-deep);
+    font-family: var(--mono);
+    font-weight: 700; font-size: 15px;
+    display: flex; align-items: center; justify-content: center;
+    flex: none; z-index: 2;
+  }
+  .line { width: 2px; flex: 1 1 auto; background: linear-gradient(var(--teal), var(--teal)); min-height: 22px; opacity: 0.4; }
+  .stage:last-child .line { display: none; }
+
+  .stage.src .node { border-color: var(--steel); color: var(--steel); }
+  .stage.done .node { border-color: var(--green); color: var(--green); background: #F0FaF4; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--hair);
+    border-radius: 14px;
+    padding: 20px 22px;
+    margin-bottom: 22px;
+    box-shadow: 0 1px 2px rgba(20,27,38,.04);
+  }
+  .card h3 { font-size: 19px; font-weight: 750; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .card p { margin: 6px 0 0; font-size: 14.5px; }
+  .card .fires {
+    margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--hair);
+    font-size: 13.5px; color: var(--body);
+  }
+  .card .fires b { color: var(--teal-deep); font-weight: 700; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+  .chip {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.02em;
+    padding: 4px 10px; border-radius: 20px; white-space: nowrap;
+  }
+  .chip.dept { background: var(--teal-wash); color: var(--teal-deep); }
+  .chip.dept.sales { background: var(--steel-wash); color: #35506e; }
+  .chip.tool { background: #F1F3F6; color: #545f6e; border: 1px solid var(--hair); }
+  .chip.new { background: var(--amber-wash); color: #93571a; }
+
+  /* ---------- comparison ---------- */
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .col {
+    border-radius: 16px; padding: 24px; border: 1px solid var(--hair); background: var(--card);
+  }
+  .col.md { border-top: 4px solid var(--steel); }
+  .col.cl { border-top: 4px solid var(--teal); }
+  .col h3 { font-size: 20px; margin: 0 0 2px; }
+  .col .tag { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .col.md .tag { color: var(--steel); }
+  .col.cl .tag { color: var(--teal); }
+  .flist { list-style: none; padding: 0; margin: 18px 0 0; display: flex; flex-direction: column; gap: 11px; }
+  .flist li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; font-size: 14.5px; align-items: start; }
+  .flist .mk { font-family: var(--mono); font-weight: 700; line-height: 1.5; }
+  .col.md .mk { color: var(--steel); }
+  .col.cl .mk { color: var(--teal); }
+
+  /* ---------- gaps ---------- */
+  .gaps { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  .gap {
+    background: var(--card); border: 1px solid var(--hair); border-left: 4px solid var(--amber);
+    border-radius: 12px; padding: 20px 22px;
+  }
+  .gap .n { font-family: var(--mono); font-size: 12px; color: var(--amber); letter-spacing: 0.06em; }
+  .gap h4 { color: var(--ink); font-size: 16.5px; margin: 6px 0 8px; font-weight: 750; }
+  .gap .md-say { font-size: 13.5px; color: var(--muted); }
+  .gap .cl-want { font-size: 14px; color: var(--body); margin-top: 6px; }
+  .gap .cl-want b { color: var(--teal-deep); }
+
+  /* ---------- coverage ---------- */
+  .cov { display: flex; flex-wrap: wrap; gap: 12px; }
+  .cov .item {
+    background: var(--card); border: 1px solid var(--hair); border-radius: 10px;
+    padding: 14px 16px; flex: 1 1 190px; min-width: 170px;
+  }
+  .cov .item .k { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--teal); text-transform: uppercase; }
+  .cov .item .v { color: var(--ink); font-weight: 650; font-size: 15px; margin-top: 4px; }
+  .cov .item .d { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+
+  .thesis {
+    margin-top: 40px; padding: 28px 30px; border-radius: 16px;
+    background: var(--ink); color: #E7ECF2;
+  }
+  .thesis .eyebrow { color: #8896a8; }
+  .thesis p { font-size: 20px; line-height: 1.5; margin: 6px 0 0; color: #F3F6F9; font-weight: 500; }
+  .thesis b { color: #5fd0c2; font-weight: 700; }
+
+  .foot { margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--hair); font-size: 13px; color: var(--muted); font-family: var(--mono); }
+
+  @media (max-width: 720px) {
+    .compare, .gaps { grid-template-columns: 1fr; }
+    .stage { grid-template-columns: 44px 1fr; gap: 14px; }
+    .node { width: 36px; height: 36px; font-size: 13px; }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .stage, .card, .gap, .col { animation: rise .5s ease both; }
+    @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="hero">
+    <p class="eyebrow">Oswin / Osphine · Business Operating System · Blueprint</p>
+    <h1>Like monday.com, <span class="accent">but built around</span><br>the whole company's workflow.</h1>
+    <p>This diagram shows two things: what monday.com already offers, and what the client wants in their own application — from lead to payment, all in one system.</p>
+    <ul class="legend">
+      <li><span class="dot steel"></span> monday.com baseline (already exists)</li>
+      <li><span class="dot teal"></span> Client's custom system (to be built)</li>
+      <li><span class="dot amber"></span> Improvement / gap (better than monday)</li>
+      <li><span class="dot green"></span> Completed</li>
+    </ul>
+  </header>
+
+  <!-- ===================== PIPELINE ===================== -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">01 · Complete Workflow</p>
+      <h2>From Lead to Payment — the full process</h2>
+      <p class="lead">Each stage is a board / department. Every node below shows which department owns it, which automation fires, and which tools are involved.</p>
+    </div>
+
+    <div class="pipe">
+
+      <div class="stage src">
+        <div class="rail"><div class="node">01</div><div class="line"></div></div>
+        <div class="card">
+          <h3>Facebook Ads</h3>
+          <p>The lead source. Ads run, and an interested candidate is driven to the intake form.</p>
+          <div class="chips">
+            <span class="chip dept sales">EXTERNAL · MARKETING</span>
+            <span class="chip tool">Facebook Lead Ads</span>
+          </div>
+          <div class="fires">🔗 <b>Integration:</b> Facebook Lead Ads flow directly into the Candidate Form / board.</div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="node">02</div><div class="line"></div></div>
+        <div class="card">
+          <h3>Candidate Form</h3>
+          <p>The candidate submits their details (name, email, phone, program). This is the entry point of intake.</p>
+          <div class="chips">
+            <span class="chip dept">INTAKE</span>
+            <span class="chip tool">Form Builder</span>
+            <span class="chip new">＋ De-dup by email</span>
+          </div>
+          <div class="fires">⚡ <b>Automation:</b> if the email already exists → the existing item is <b>updated</b> instead of creating a duplicate.</div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="node">03</div><div class="line"></div></div>
+        <div class="card">
+          <h3>Sales Board</h3>
+          <p>The new lead lands in the “New Leads” group (blue). The sales process starts here.</p>
+          <div class="chips">
+            <span class="chip dept sales">SALES</span>
+            <span class="chip tool">Groups · Status · Person</span>
+          </div>
+          <div class="fires">⚡ <b>Automation:</b> item created → group = New Leads, status = New.</div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="node">04</div><div class="line"></div></div>
+        <div class="card">
+          <h3>Auto-Assign Sales Person <span class="chip new" style="vertical-align:middle">Round Robin</span></h3>
+          <p>The lead is automatically rotated and assigned to a sales consultant — fair distribution.</p>
+          <div class="chips">
+            <span class="chip dept sales">SALES</span>
+            <span class="chip tool">Person Column</span>
+            <span class="chip new">＋ Built-in Round Robin</span>
+          </div>
+          <div class="fires">⚡ <b>Automation:</b> new lead → assign to next consultant → notify them.</div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="node">05</div><div class="line"></div></div>
+        <div class="card">
+          <h3>Consultation</h3>
+          <p>The consultant speaks with the candidate. Status becomes “Contacting” (yellow); the footprint is saved in updates/bubble.</p>
+          <div class="chips">
+            <span class="chip dept sales">SALES</span>
+            <span class="chip tool">Updates / @mention</span>
+            <span class="chip tool">Status → Contacting</span>
+          </div>
+          <div class="fires">⚡ <b>Automation:</b> status change → item moves to that group + the department is tagged.</div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="node">06</div><div class="line"></div></div>
+        <div class="card">
+          <h3>Visa Process</h3>
+          <p>A qualified candidate enters the visa stage. Visa expiry dates are tracked and reminders are sent.</p>
+          <div class="chips">
+            <span class="chip dept">VISA</span>
+            <span class="chip tool">Date Columns</span>
+            <span class="chip tool">Reminders</span>
+          </div>
+          <div class="fires">⚡ <b>Automation:</b> notify 1mo / 3wk / 2wk / 1wk / 5d / 3d / 2d / 1d before visa expiry + email.</div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="node">07</div><div class="line"></div></div>
+        <div class="card">
+          <h3>Contract Generation</h3>
+          <p>A contract / job-offer document is generated from board data — using a template + placeholders (300+ employer templates).</p>
+          <div class="chips">
+            <span class="chip dept">DOCUMENTS</span>
+            <span class="chip tool">DocuGen</span>
+            <span class="chip tool">Template + Placeholders → PDF/Word</span>
+          </div>
+          <div class="fires">⚡ <b>Automation:</b> status = Generate → build document → save to File column (“output”).</div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="node">08</div><div class="line"></div></div>
+        <div class="card">
+          <h3>DocuSign</h3>
+          <p>The candidate signs the contract. The signature is pulled into the board via a mirror column.</p>
+          <div class="chips">
+            <span class="chip dept">DOCUMENTS</span>
+            <span class="chip tool">DocuSign · E-signature</span>
+            <span class="chip tool">Mirror Column</span>
+          </div>
+          <div class="fires">⚡ <b>Automation:</b> signed → status update → trigger the next stage (Finance).</div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="node">09</div><div class="line"></div></div>
+        <div class="card">
+          <h3>Finance / Accounts <span class="chip new" style="vertical-align:middle">Build FIRST</span></h3>
+          <p>Every department's invoice request arrives here. Accounts verifies it — only then is an invoice created.</p>
+          <div class="chips">
+            <span class="chip dept">ACCOUNTS</span>
+            <span class="chip tool">Invoice Intake → Verify</span>
+            <span class="chip new">＋ Approval Stages</span>
+          </div>
+          <div class="fires">⚡ <b>Automation:</b> request → intake stage → Accounts approve → trigger invoice generation. <b>Every department connects here.</b></div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="node">10</div><div class="line"></div></div>
+        <div class="card">
+          <h3>Stripe Payment</h3>
+          <p>Once verified, a Stripe invoice is auto-generated (amount, territory, email pre-filled) and emailed to the candidate.</p>
+          <div class="chips">
+            <span class="chip dept">ACCOUNTS</span>
+            <span class="chip tool">Stripe · PTY (offshore)</span>
+            <span class="chip tool">Stripe · Global (Dubai)</span>
+            <span class="chip new">＋ Offline / Serop capture</span>
+          </div>
+          <div class="fires">⚡ <b>Automation:</b> approved → Stripe invoice → auto-email → paid status updated on the board.</div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="node">11</div><div class="line"></div></div>
+        <div class="card">
+          <h3>Dashboard Report</h3>
+          <p>Data from all boards flows into one cross-department dashboard — monthly reports, charts, KPIs. Click any number to verify.</p>
+          <div class="chips">
+            <span class="chip dept">REPORTING</span>
+            <span class="chip tool">Cross-board Charts</span>
+            <span class="chip tool">~1 min auto-refresh</span>
+          </div>
+          <div class="fires">📊 <b>Only “Done” items are counted</b> — mistriggered/forgotten statuses are caught via drill-down.</div>
+        </div>
+      </div>
+
+      <div class="stage done">
+        <div class="rail"><div class="node">✓</div><div class="line"></div></div>
+        <div class="card">
+          <h3>Completed</h3>
+          <p>Candidate placed, payment received, records in the dashboard. The group turns green — the process is complete.</p>
+          <div class="chips">
+            <span class="chip dept" style="background:#EAF7EF;color:#1f7a48">DONE</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ===================== COMPARISON ===================== -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">02 · monday.com vs Client</p>
+      <h2>What's the same, what's extra</h2>
+      <p class="lead">monday.com is a general project-management tool. The client wants their entire business system on a similar UI.</p>
+    </div>
+
+    <div class="compare">
+      <div class="col md">
+        <span class="tag">Baseline · already exists</span>
+        <h3>What monday.com offers</h3>
+        <ul class="flist">
+          <li><span class="mk">✓</span><span>Users, roles (Admin / Member / Viewer)</span></li>
+          <li><span class="mk">✓</span><span>Workspaces, boards, groups, columns</span></li>
+          <li><span class="mk">✓</span><span>Status / Date / File columns</span></li>
+          <li><span class="mk">✓</span><span>Forms → responses into the board</span></li>
+          <li><span class="mk">✓</span><span>Automations (limited)</span></li>
+          <li><span class="mk">✓</span><span>Connected boards + mirror columns</span></li>
+          <li><span class="mk">✓</span><span>Dashboards, charts, filters &amp; views</span></li>
+          <li><span class="mk">✓</span><span>Google login, invite users, @mentions</span></li>
+          <li><span class="mk">✓</span><span>Docs &amp; e-sign — only via 3rd-party apps (DocuGen, DocuSign)</span></li>
+        </ul>
+      </div>
+
+      <div class="col cl">
+        <span class="tag">Custom · to be built</span>
+        <h3>What the client wants</h3>
+        <ul class="flist">
+          <li><span class="mk">＋</span><span>All baseline features + <b>custom roles + Developer</b></span></li>
+          <li><span class="mk">＋</span><span>Advanced automation builder — unlimited workflow engine</span></li>
+          <li><span class="mk">＋</span><span>A <b>folder + search</b> system for automations</span></li>
+          <li><span class="mk">＋</span><span>Duplicate prevention (email match)</span></li>
+          <li><span class="mk">＋</span><span>Built-in Round Robin, Document Generator, E-signature</span></li>
+          <li><span class="mk">＋</span><span>Full Finance module — Invoicing + Stripe workflow + accounting boards</span></li>
+          <li><span class="mk">＋</span><span>Candidate Tracking, Visa Tracking, HR Workflow</span></li>
+          <li><span class="mk">＋</span><span>Employer management + candidate→employer tagging</span></li>
+          <li><span class="mk">＋</span><span>Recruitment CRM — all in one app</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== GAPS ===================== -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">03 · The 4 Improvements</p>
+      <h2>Where we go beyond monday.com</h2>
+      <p class="lead">Everything else is replicated. Only these 4 things are missing or limited in monday.com — these are the ones to improve.</p>
+    </div>
+
+    <div class="gaps">
+      <div class="gap">
+        <span class="n">GAP 01</span>
+        <h4>Duplicate prevention on forms</h4>
+        <p class="md-say">monday: every form submission creates a new duplicate entry.</p>
+        <p class="cl-want">Client: <b>match by email and update</b> — no duplicate created.</p>
+      </div>
+      <div class="gap">
+        <span class="n">GAP 02</span>
+        <h4>Clickable links in emails</h4>
+        <p class="md-say">monday: automated emails can only send a plain URL.</p>
+        <p class="cl-want">Client: a <b>clickable button / hyperlink</b> that redirects the candidate.</p>
+      </div>
+      <div class="gap">
+        <span class="n">GAP 03</span>
+        <h4>Automation organization</h4>
+        <p class="md-say">monday: no folders or search for automations — it gets confusing.</p>
+        <p class="cl-want">Client: <b>folders + search</b> to manage many automations.</p>
+      </div>
+      <div class="gap">
+        <span class="n">GAP 04</span>
+        <h4>Candidate → Employer tagging</h4>
+        <p class="md-say">monday: not a native feature — currently done via a manual hack.</p>
+        <p class="cl-want">Client: <b>easy native tagging + live counts</b> (active / interview / placed).</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== COVERAGE ===================== -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">04 · One App Replaces</p>
+      <h2>One application, 9 systems</h2>
+      <p class="lead">monday.com is only project management. The client's app does the work of all of these in one place.</p>
+    </div>
+
+    <div class="cov">
+      <div class="item"><div class="k">01</div><div class="v">Project Management</div><div class="d">Boards, tasks, stages</div></div>
+      <div class="item"><div class="k">02</div><div class="v">CRM</div><div class="d">Leads, consultation, follow-ups</div></div>
+      <div class="item"><div class="k">03</div><div class="v">Recruitment System</div><div class="d">Candidate pipeline</div></div>
+      <div class="item"><div class="k">04</div><div class="v">Visa Management</div><div class="d">Visa stages + expiry reminders</div></div>
+      <div class="item"><div class="k">05</div><div class="v">HR Management</div><div class="d">HR workflows</div></div>
+      <div class="item"><div class="k">06</div><div class="v">Finance System</div><div class="d">Invoicing + Stripe + accounting</div></div>
+      <div class="item"><div class="k">07</div><div class="v">Document Management</div><div class="d">Generate + e-sign</div></div>
+      <div class="item"><div class="k">08</div><div class="v">Workflow Automation</div><div class="d">Custom rule engine</div></div>
+      <div class="item"><div class="k">09</div><div class="v">Reporting Dashboard</div><div class="d">Cross-board reports</div></div>
+    </div>
+
+    <div class="thesis">
+      <p class="eyebrow">Bottom line</p>
+      <p>The client doesn't want to <b>copy</b> monday.com. They want <b>a monday.com-style flexible UI + basic features</b>, on top of which every department (Sales, Visa, HR, Finance) runs its own workflow — a <b>custom ERP / CRM</b> where the entire business lives in one app.</p>
+    </div>
+  </section>
+
+  <p class="foot">Oswin / Osphine Work OS — Workflow Blueprint · v1 · Source: monday.com walkthrough (Parts 0–17)</p>
+
+</div>

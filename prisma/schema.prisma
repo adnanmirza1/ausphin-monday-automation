@@ -1,0 +1,364 @@
+// Oswin Work OS — domain schema
+// SQLite for dev (portable to Postgres). Prisma 7 `prisma-client` generator.
+// Note: SQLite has no native enums — string fields document allowed values.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ─────────────────────────── Org & access control ───────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  users        User[]
+  roles        Role[]
+  departments  Department[]
+  environments Environment[]
+  invitations  Invitation[]
+  invoices     Invoice[]
+  employers    Employer[]
+}
+
+// Roles hold a JSON permission set. isSystem roles (Admin/Member/Viewer/Developer)
+// ship by default; users can add/edit/remove custom roles.
+model Role {
+  id          String   @id @default(cuid())
+  orgId       String
+  name        String
+  color       String   @default("#5B7A99")
+  permissions String   @default("{}") // JSON: { boards:"all"|ids[], canEditColumns, canManageUsers, ... }
+  isSystem    Boolean  @default(false)
+  rank        Int      @default(100) // lower = more powerful (Admin=0)
+  createdAt   DateTime @default(now())
+
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  users User[]
+
+  @@unique([orgId, name])
+}
+
+model Department {
+  id        String   @id @default(cuid())
+  orgId     String
+  name      String
+  color     String   @default("#0B7A6F")
+  createdAt DateTime @default(now())
+
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  users User[]
+
+  @@unique([orgId, name])
+}
+
+// status: active | inactive | unavailable | viewer
+model User {
+  id           String   @id @default(cuid())
+  orgId        String
+  email        String   @unique
+  name         String
+  passwordHash String? // null for pure Google sign-in
+  avatarColor  String   @default("#0B7A6F")
+  status       String   @default("active")
+  roleId       String?
+  departmentId String?
+  createdAt    DateTime @default(now())
+
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  role       Role?        @relation(fields: [roleId], references: [id])
+  department Department?  @relation(fields: [departmentId], references: [id])
+
+  sessions       Session[]
+  assignedCells  Cell[] // person-column assignments referencing this user
+  updates        Update[]
+  invitesCreated Invitation[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// status: pending | accepted | revoked  · role assigned on accept
+model Invitation {
+  id        String   @id @default(cuid())
+  orgId     String
+  email     String
+  roleId    String?
+  invitedBy String?
+  status    String   @default("pending")
+  token     String   @unique @default(cuid())
+  createdAt DateTime @default(now())
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  inviter User?        @relation(fields: [invitedBy], references: [id])
+}
+
+// ─────────────────────────── Work OS core ───────────────────────────
+
+model Environment {
+  id        String   @id @default(cuid())
+  orgId     String
+  name      String
+  color     String   @default("#0B7A6F")
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  boards Board[]
+}
+
+model Board {
+  id            String   @id @default(cuid())
+  environmentId String
+  name          String
+  description   String   @default("")
+  position      Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  // Public intake form (Part 10)
+  formEnabled Boolean @default(false)
+  formTitle   String  @default("")
+  formDesc    String  @default("")
+  formConfig  String  @default("{}") // JSON: { columns: string[], dedupeColumnId?: string }
+
+  environment  Environment   @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  groups       Group[]
+  columns      Column[]
+  items        Item[]
+  automations   Automation[]
+  views         BoardView[]
+  docTemplates  DocTemplate[]
+  reminderRules ReminderRule[]
+}
+
+model Group {
+  id       String @id @default(cuid())
+  boardId  String
+  name     String
+  color    String @default("#5B7A99")
+  position Int    @default(0)
+
+  board Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  items Item[]
+}
+
+// type: text | longtext | status | person | date | file | number | email | phone | connection | mirror
+// config: JSON — e.g. status { labels:[{id,label,color}] }
+model Column {
+  id       String  @id @default(cuid())
+  boardId  String
+  name     String
+  type     String
+  config   String  @default("{}")
+  position Int     @default(0)
+  hidden   Boolean @default(false)
+
+  board Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cells Cell[]
+}
+
+model Item {
+  id        String   @id @default(cuid())
+  boardId   String
+  groupId   String
+  name      String
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  board       Board               @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  group       Group               @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  cells       Cell[]
+  updates     Update[]
+  documents   GeneratedDocument[]
+  employerTags CandidateTag[]
+
+  @@index([boardId])
+  @@index([groupId])
+}
+
+// value holds the raw cell value (string / ISO date / number / label id).
+// personId is set for person columns (FK to User) so we can query assignments.
+model Cell {
+  id       String  @id @default(cuid())
+  itemId   String
+  columnId String
+  value    String?
+  personId String?
+
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  column Column @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  person User?  @relation(fields: [personId], references: [id])
+
+  @@unique([itemId, columnId])
+  @@index([columnId])
+}
+
+model Update {
+  id        String   @id @default(cuid())
+  itemId    String
+  authorId  String?
+  body      String
+  mentions  String   @default("[]") // JSON array of userIds / departmentIds
+  createdAt DateTime @default(now())
+
+  item   Item  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  author User? @relation(fields: [authorId], references: [id])
+}
+
+// Saved filtered/hidden-column presentation of a board.
+model BoardView {
+  id        String   @id @default(cuid())
+  boardId   String
+  name      String
+  config    String   @default("{}") // JSON: { hiddenColumns:[], filters:[] }
+  isPinned  Boolean  @default(false)
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+}
+
+// Document generation (Part 11) — DocuGen-style.
+// body holds text with {{Placeholders}} that map to column names or {{Item}}.
+model DocTemplate {
+  id        String   @id @default(cuid())
+  boardId   String
+  name      String
+  body      String   @default("")
+  createdAt DateTime @default(now())
+
+  board     Board               @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  documents GeneratedDocument[]
+}
+
+// A filled document generated from a template + an item's data.
+model GeneratedDocument {
+  id         String   @id @default(cuid())
+  itemId     String
+  templateId String?
+  name       String
+  html       String
+  content    String   @default("[]") // structured blocks JSON for PDF/DOCX export
+  createdAt  DateTime @default(now())
+
+  item     Item         @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  template DocTemplate? @relation(fields: [templateId], references: [id])
+
+  @@index([itemId])
+}
+
+// Candidate → Employer tagging (Part 15) — native, with live stage counts.
+model Employer {
+  id           String   @id @default(cuid())
+  orgId        String
+  name         String
+  contactEmail String   @default("")
+  contactPhone String   @default("")
+  notes        String   @default("")
+  createdAt    DateTime @default(now())
+
+  org  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  tags CandidateTag[]
+
+  @@unique([orgId, name])
+}
+
+// stage: interview | active | placed | past
+model CandidateTag {
+  id         String   @id @default(cuid())
+  employerId String
+  itemId     String
+  stage      String   @default("interview")
+  createdAt  DateTime @default(now())
+
+  employer Employer @relation(fields: [employerId], references: [id], onDelete: Cascade)
+  item     Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([employerId, itemId])
+  @@index([itemId])
+}
+
+// Date-based reminders (Part 14) — e.g. visa expiry: notify N days before a date.
+model ReminderRule {
+  id                 String   @id @default(cuid())
+  boardId            String
+  name               String
+  dateColumnId       String
+  offsets            String   @default("[30,21,14,7,5,3,2,1]") // JSON array of days-before
+  notifyDepartmentId String?
+  message            String   @default("")
+  enabled            Boolean  @default(true)
+  createdAt          DateTime @default(now())
+
+  board Board         @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  logs  ReminderLog[]
+}
+
+// One row per (rule, item, offset) already fired — prevents duplicate sends.
+model ReminderLog {
+  id         String   @id @default(cuid())
+  ruleId     String
+  itemId     String
+  offsetDays Int
+  createdAt  DateTime @default(now())
+
+  rule ReminderRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, itemId, offsetDays])
+}
+
+// Finance / Accounts (Part 17).
+// account: pty (Osphine PTY, offshore) | global (Osphine Global, Dubai)
+// status: requested → approved → invoiced → paid  (or rejected)
+model Invoice {
+  id              String   @id @default(cuid())
+  orgId           String
+  account         String   @default("pty")
+  candidateName   String
+  candidateEmail  String   @default("")
+  amountCents     Int      @default(0)
+  currency        String   @default("AUD")
+  description     String   @default("")
+  department      String   @default("")
+  status          String   @default("requested")
+  stripeInvoiceId String?
+  stripeUrl       String?
+  paymentMethod   String   @default("stripe") // stripe | offline
+  requestedById   String?
+  approvedById    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+// User-built "when trigger → do action" rules.
+// trigger/action stored as JSON so the builder stays flexible.
+model Automation {
+  id        String   @id @default(cuid())
+  boardId   String
+  name      String
+  folder    String   @default("") // client wants folders + search
+  enabled   Boolean  @default(true)
+  trigger   String   @default("{}") // JSON
+  action    String   @default("{}") // JSON
+  createdAt DateTime @default(now())
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+}

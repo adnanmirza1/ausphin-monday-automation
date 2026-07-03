@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ausphin-monday-automation
 
-## Getting Started
+**Oswin / Osphine Work OS** — a monday.com-style Work Operating System tailored to a
+visa/migration recruitment business. Boards, workflows, documents, finance and
+reporting for every department in one app.
 
-First, run the development server:
+## Stack
+
+- **Next.js 16** (App Router, Turbopack) · **React 19** · **TypeScript** · **Tailwind CSS v4**
+- **Prisma 7** ORM. SQLite for local dev (portable to Postgres for production) via the
+  `@prisma/adapter-better-sqlite3` driver adapter.
+- Custom cookie-session auth (bcrypt). Google OAuth is integration-ready.
+
+## Features
+
+- **Admin**: custom roles + granular per-board permissions, departments, user status, email invitations (with accept/join link)
+- **Environments → Boards → Groups → Items** with 11 column types (text, status, person, date, number, email, phone, **signature**, **connection**, **mirror**, file)
+- **Views**: Table · Kanban · Calendar · saved & pinned filtered views · drag-and-drop reordering (items, groups, columns)
+- **Automations**: visual "when → then" builder (move, set status, notify, round-robin, generate document, request invoice), folders + search, edit
+- **Forms**: public intake forms with de-dup by email + cross-board connection; signature pad
+- **Documents (DocuGen)**: templates with placeholders → real **PDF** (pdf-lib) + real **.docx** (OOXML), signatures embedded
+- **Finance**: invoice intake → verify → Stripe invoice → email; PTY + Global accounts; offline capture
+- **Reminders**: date-based (e.g. visa expiry) with a cron endpoint
+- **Dashboard**: cross-board KPIs & charts with month/person/program filters
+- **Employers**: candidate → employer tagging with live stage counts
+- Fully **responsive** (mobile drawer sidebar)
+
+## Getting started
 
 ```bash
+npm install
+# set DATABASE_URL in .env (e.g. file:./dev.db)
+npx prisma migrate dev
+npm run db:seed        # demo org, users, sample boards
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Demo login: `adnan.mustafa@toptal.com` / `password`
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Var | Purpose |
+|-----|---------|
+| `DATABASE_URL` | e.g. `file:./dev.db` (dev) or a Postgres URL (prod) |
+| `CRON_SECRET` | Bearer token for `GET /api/cron/reminders` |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google sign-in |
+| `STRIPE_SECRET_KEY_PTY` / `STRIPE_SECRET_KEY_GLOBAL` | Stripe invoicing |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | Outbound email |
+| `DOCUSIGN_INTEGRATION_KEY` / `DOCUSIGN_ACCOUNT_ID` / `DOCUSIGN_SECRET` / `DOCUSIGN_BASE_URL` | E-signature |
 
-## Learn More
+Integration status is visible in-app at **Settings → Integrations** (admin).
 
-To learn more about Next.js, take a look at the following resources:
+## Scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `npm run dev` — dev server
+- `npm run build` / `npm start` — production build & serve
+- `npm run db:seed` / `npm run db:reset` / `npm run db:studio`
