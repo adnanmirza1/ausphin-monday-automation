@@ -7,6 +7,8 @@ import {
   setUserDepartment,
   setUserStatus,
   createUser,
+  editUser,
+  deleteUser,
   addDepartment,
   deleteDepartment,
   editDepartment,
@@ -47,12 +49,14 @@ export function AdminPanel({
   departments,
   invitations,
   boards,
+  currentUserId,
 }: {
   users: UserRow[];
   roles: Role[];
   departments: Dept[];
   invitations: Invite[];
   boards: BoardLite[];
+  currentUserId: string;
 }) {
   const [tab, setTab] = useState<Tab>("Users");
 
@@ -86,7 +90,7 @@ export function AdminPanel({
 
       <div className="flex-1 overflow-auto scroll-thin p-6">
         {tab === "Users" && (
-          <UsersTab users={users} roles={roles} departments={departments} />
+          <UsersTab users={users} roles={roles} departments={departments} currentUserId={currentUserId} />
         )}
         {tab === "Roles" && <RolesTab roles={roles} boards={boards} />}
         {tab === "Departments" && <DepartmentsTab departments={departments} />}
@@ -105,10 +109,12 @@ function UsersTab({
   users,
   roles,
   departments,
+  currentUserId,
 }: {
   users: UserRow[];
   roles: Role[];
   departments: Dept[];
+  currentUserId: string;
 }) {
   const [, start] = useTransition();
   return (
@@ -152,68 +158,18 @@ function UsersTab({
               <Th>Role</Th>
               <Th>Department</Th>
               <Th>Status</Th>
+              <Th>Actions</Th>
             </tr>
           </thead>
           <tbody>
             {users.map((u) => (
-              <tr key={u.id} className="border-b border-hair last:border-0">
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-2.5">
-                    <span
-                      className="grid h-8 w-8 place-items-center rounded-full text-[11px] font-bold text-white"
-                      style={{ background: u.avatarColor }}
-                    >
-                      {initials(u.name)}
-                    </span>
-                    <div>
-                      <p className="font-medium text-ink">{u.name}</p>
-                      <p className="text-xs text-muted">{u.email}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-2.5">
-                  <select
-                    value={u.roleId ?? ""}
-                    onChange={(e) =>
-                      start(() => void setUserRole(u.id, e.target.value || null))
-                    }
-                    className={selCls}
-                  >
-                    <option value="">—</option>
-                    {roles.map((r) => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
-                    ))}
-                  </select>
-                </td>
-                <td className="px-4 py-2.5">
-                  <select
-                    value={u.departmentId ?? ""}
-                    onChange={(e) =>
-                      start(() => void setUserDepartment(u.id, e.target.value || null))
-                    }
-                    className={selCls}
-                  >
-                    <option value="">—</option>
-                    {departments.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                </td>
-                <td className="px-4 py-2.5">
-                  <select
-                    value={u.status}
-                    onChange={(e) =>
-                      start(() => void setUserStatus(u.id, e.target.value))
-                    }
-                    className={selCls}
-                    style={{ color: USER_STATUS_META[u.status as keyof typeof USER_STATUS_META]?.color }}
-                  >
-                    {USER_STATUSES.map((s) => (
-                      <option key={s} value={s}>{USER_STATUS_META[s].label}</option>
-                    ))}
-                  </select>
-                </td>
-              </tr>
+              <UserRow
+                key={u.id}
+                u={u}
+                roles={roles}
+                departments={departments}
+                isSelf={u.id === currentUserId}
+              />
             ))}
           </tbody>
         </table>
@@ -223,6 +179,123 @@ function UsersTab({
         their footprint on a free seat.
       </p>
     </div>
+  );
+}
+
+function UserRow({
+  u,
+  roles,
+  departments,
+  isSelf,
+}: {
+  u: UserRow;
+  roles: Role[];
+  departments: Dept[];
+  isSelf: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(u.name);
+  const [email, setEmail] = useState(u.email);
+  const [err, setErr] = useState<string | null>(null);
+  const [, start] = useTransition();
+
+  return (
+    <tr className="border-b border-hair last:border-0">
+      <td className="px-4 py-2.5">
+        <div className="flex items-center gap-2.5">
+          <span
+            className="grid h-8 w-8 flex-none place-items-center rounded-full text-[11px] font-bold text-white"
+            style={{ background: u.avatarColor }}
+          >
+            {initials(u.name)}
+          </span>
+          {editing ? (
+            <div className="flex flex-col gap-1">
+              <input value={name} onChange={(e) => setName(e.target.value)} className={selCls} placeholder="Name" />
+              <input value={email} onChange={(e) => setEmail(e.target.value)} className={selCls} placeholder="Email" />
+              {err && <span className="text-xs text-danger">{err}</span>}
+            </div>
+          ) : (
+            <div>
+              <p className="font-medium text-ink">{u.name}{isSelf && <span className="ml-1 text-xs text-muted">(you)</span>}</p>
+              <p className="text-xs text-muted">{u.email}</p>
+            </div>
+          )}
+        </div>
+      </td>
+      <td className="px-4 py-2.5">
+        <select
+          value={u.roleId ?? ""}
+          onChange={(e) => start(() => void setUserRole(u.id, e.target.value || null))}
+          className={selCls}
+        >
+          <option value="">—</option>
+          {roles.map((r) => (
+            <option key={r.id} value={r.id}>{r.name}</option>
+          ))}
+        </select>
+      </td>
+      <td className="px-4 py-2.5">
+        <select
+          value={u.departmentId ?? ""}
+          onChange={(e) => start(() => void setUserDepartment(u.id, e.target.value || null))}
+          className={selCls}
+        >
+          <option value="">—</option>
+          {departments.map((d) => (
+            <option key={d.id} value={d.id}>{d.name}</option>
+          ))}
+        </select>
+      </td>
+      <td className="px-4 py-2.5">
+        <select
+          value={u.status}
+          onChange={(e) => start(() => void setUserStatus(u.id, e.target.value))}
+          className={selCls}
+          style={{ color: USER_STATUS_META[u.status as keyof typeof USER_STATUS_META]?.color }}
+        >
+          {USER_STATUSES.map((s) => (
+            <option key={s} value={s}>{USER_STATUS_META[s].label}</option>
+          ))}
+        </select>
+      </td>
+      <td className="px-4 py-2.5">
+        {editing ? (
+          <div className="flex gap-2">
+            <button
+              onClick={() =>
+                start(async () => {
+                  const e = await editUser(u.id, name, email);
+                  if (e) setErr(e);
+                  else { setErr(null); setEditing(false); }
+                })
+              }
+              className="text-xs font-semibold text-teal hover:underline"
+            >
+              Save
+            </button>
+            <button onClick={() => { setEditing(false); setErr(null); setName(u.name); setEmail(u.email); }} className="text-xs text-muted hover:text-body">
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div className="flex gap-3">
+            <button onClick={() => setEditing(true)} className="text-xs text-teal hover:underline">Edit</button>
+            {!isSelf && (
+              <button
+                onClick={() => {
+                  if (confirm(`Delete ${u.name}? This can't be undone. (Tip: set to Viewer to keep their history.)`))
+                    start(() => void deleteUser(u.id));
+                }}
+                className="text-xs text-muted hover:text-danger"
+              >
+                Delete
+              </button>
+            )}
+          </div>
+        )}
+      </td>
+    </tr>
   );
 }
 

@@ -39,6 +39,7 @@ export default async function AdminPage() {
         departmentId: u.departmentId,
       }))}
       boards={boards}
+      currentUserId={user.id}
       roles={roles.map((r) => ({
         id: r.id,
         name: r.name,

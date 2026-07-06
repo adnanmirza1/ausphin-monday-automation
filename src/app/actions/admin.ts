@@ -30,6 +30,42 @@ export async function setUserStatus(userId: string, status: string) {
   touch();
 }
 
+// Edit a user's name / email. Returns an error string or null.
+export async function editUser(
+  userId: string,
+  name: string,
+  email: string
+): Promise<string | null> {
+  await requireAdmin();
+  const cleanName = name.trim();
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanName || !cleanEmail) return "Name and email are required.";
+  const clash = await db.user.findFirst({
+    where: { email: cleanEmail, id: { not: userId } },
+    select: { id: true },
+  });
+  if (clash) return "Another user already uses this email.";
+  await db.user.update({ where: { id: userId }, data: { name: cleanName, email: cleanEmail } });
+  touch();
+  return null;
+}
+
+// Permanently delete a user. Clears their references first, and never allows
+// deleting yourself. (For preserving history, set status to Viewer instead.)
+export async function deleteUser(userId: string): Promise<string | null> {
+  const admin = await requireAdmin();
+  if (admin.id === userId) return "You can't delete your own account.";
+  await db.$transaction([
+    db.session.deleteMany({ where: { userId } }),
+    db.cell.updateMany({ where: { personId: userId }, data: { personId: null } }),
+    db.update.updateMany({ where: { authorId: userId }, data: { authorId: null } }),
+    db.invitation.updateMany({ where: { invitedBy: userId }, data: { invitedBy: null } }),
+    db.user.delete({ where: { id: userId } }),
+  ]);
+  touch();
+  return null;
+}
+
 export async function createUser(formData: FormData) {
   const admin = await requireAdmin();
   const name = String(formData.get("name") ?? "").trim();
