@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useActionState, useState, useTransition } from "react";
 import { PALETTE, USER_STATUSES, USER_STATUS_META } from "@/lib/constants";
 import {
   setUserRole,
@@ -116,14 +116,11 @@ function UsersTab({
   departments: Dept[];
   currentUserId: string;
 }) {
-  const [, start] = useTransition();
+  const [userMsg, userAction] = useActionState(createUser, null);
   return (
     <div className="max-w-5xl">
       <Card>
-        <form
-          action={(fd) => start(() => void createUser(fd))}
-          className="flex flex-wrap items-end gap-3"
-        >
+        <form action={userAction} className="flex flex-wrap items-end gap-3">
           <Field label="Name">
             <input name="name" required className={inputCls} placeholder="Jane Doe" />
           </Field>
@@ -148,6 +145,7 @@ function UsersTab({
           </Field>
           <button className={btnPrimary}>Add user</button>
         </form>
+        {userMsg && <p className="mt-2 text-sm text-danger">{userMsg}</p>}
       </Card>
 
       <div className="mt-4 overflow-x-auto scroll-thin rounded-lg border border-hair bg-white">
@@ -301,11 +299,11 @@ function UserRow({
 
 /* ── Roles ─────────────────────────────────────────── */
 function RolesTab({ roles, boards }: { roles: Role[]; boards: BoardLite[] }) {
-  const [, start] = useTransition();
+  const [roleMsg, roleAction] = useActionState(addRole, null);
   return (
     <div className="max-w-3xl">
       <Card>
-        <form action={(fd) => start(() => void addRole(fd))} className="flex flex-col gap-3">
+        <form action={roleAction} className="flex flex-col gap-3">
           <div className="flex flex-wrap items-end gap-3">
             <Field label="Role name">
               <input name="name" required className={inputCls} placeholder="e.g. Tester" />
@@ -331,6 +329,7 @@ function RolesTab({ roles, boards }: { roles: Role[]; boards: BoardLite[] }) {
             </div>
           </div>
         </form>
+        {roleMsg && <p className="mt-2 text-sm text-danger">{roleMsg}</p>}
       </Card>
 
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
@@ -423,14 +422,11 @@ function RoleCard({ role, boards }: { role: Role; boards: BoardLite[] }) {
 
 /* ── Departments ───────────────────────────────────── */
 function DepartmentsTab({ departments }: { departments: Dept[] }) {
-  const [, start] = useTransition();
+  const [deptMsg, deptAction] = useActionState(addDepartment, null);
   return (
     <div className="max-w-3xl">
       <Card>
-        <form
-          action={(fd) => start(() => void addDepartment(fd))}
-          className="flex flex-wrap items-end gap-3"
-        >
+        <form action={deptAction} className="flex flex-wrap items-end gap-3">
           <Field label="Department name">
             <input name="name" required className={inputCls} placeholder="e.g. Marketing" />
           </Field>
@@ -439,6 +435,7 @@ function DepartmentsTab({ departments }: { departments: Dept[] }) {
           </Field>
           <button className={btnPrimary}>Add department</button>
         </form>
+        {deptMsg && <p className="mt-2 text-sm text-danger">{deptMsg}</p>}
       </Card>
 
       <div className="mt-4 flex flex-wrap gap-2">

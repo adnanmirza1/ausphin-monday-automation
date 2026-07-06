@@ -66,16 +66,19 @@ export async function deleteUser(userId: string): Promise<string | null> {
   return null;
 }
 
-export async function createUser(formData: FormData) {
+export async function createUser(
+  _prev: string | null,
+  formData: FormData
+): Promise<string | null> {
   const admin = await requireAdmin();
   const name = String(formData.get("name") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const roleId = String(formData.get("roleId") ?? "") || null;
   const departmentId = String(formData.get("departmentId") ?? "") || null;
-  if (!name || !email) return;
+  if (!name || !email) return "Name and email are required.";
 
   const exists = await db.user.findUnique({ where: { email } });
-  if (exists) return;
+  if (exists) return `A user with email “${email}” already exists.`;
 
   await db.user.create({
     data: {
@@ -90,16 +93,25 @@ export async function createUser(formData: FormData) {
     },
   });
   touch();
+  return null;
 }
 
 // ── Departments ──────────────────────────────────────────────
-export async function addDepartment(formData: FormData) {
+export async function addDepartment(
+  _prev: string | null,
+  formData: FormData
+): Promise<string | null> {
   const admin = await requireAdmin();
   const name = String(formData.get("name") ?? "").trim();
   const color = String(formData.get("color") ?? "#0B7A6F");
-  if (!name) return;
+  if (!name) return "Department name is required.";
+  const exists = await db.department.findFirst({
+    where: { orgId: admin.orgId, name: { equals: name, mode: "insensitive" } },
+  });
+  if (exists) return `Department “${name}” already exists.`;
   await db.department.create({ data: { orgId: admin.orgId, name, color } });
   touch();
+  return null;
 }
 
 export async function deleteDepartment(id: string) {
@@ -118,13 +130,20 @@ function buildPerms(readOnly: boolean, boards: string[]) {
   );
 }
 
-export async function addRole(formData: FormData) {
+export async function addRole(
+  _prev: string | null,
+  formData: FormData
+): Promise<string | null> {
   const admin = await requireAdmin();
   const name = String(formData.get("name") ?? "").trim();
   const color = String(formData.get("color") ?? "#5B7A99");
   const readOnly = formData.get("readOnly") === "on";
   const boards = formData.getAll("boards").map(String);
-  if (!name) return;
+  if (!name) return "Role name is required.";
+  const exists = await db.role.findFirst({
+    where: { orgId: admin.orgId, name: { equals: name, mode: "insensitive" } },
+  });
+  if (exists) return `Role “${name}” already exists.`;
   await db.role.create({
     data: {
       orgId: admin.orgId,
@@ -136,6 +155,7 @@ export async function addRole(formData: FormData) {
     },
   });
   touch();
+  return null;
 }
 
 export async function editRole(
