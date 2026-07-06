@@ -4,11 +4,11 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { logoutAction } from "@/app/actions/auth";
-import { addBoard } from "@/app/actions/board";
+import { addBoard, sortBoards } from "@/app/actions/board";
 import {
   createEnvironment,
   renameEnvironment,
-  deleteEnvironment,
+  archiveEnvironment,
   setEnvironmentColor,
 } from "@/app/actions/environment";
 import { PALETTE } from "@/lib/constants";
@@ -170,6 +170,19 @@ export function Sidebar({
             <span className="font-mono text-xs">⚡</span> Integrations
           </Link>
         )}
+        {user.canManageEnvironments && (
+          <Link
+            href="/trash"
+            onClick={onNavigate}
+            className={`mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
+              pathname.startsWith("/trash")
+                ? "bg-teal/20 font-medium text-white"
+                : "text-white/70 hover:bg-rail-hover"
+            }`}
+          >
+            <span className="font-mono text-xs">🗄</span> Archive / Trash
+          </Link>
+        )}
 
         <div className="mt-1 flex items-center gap-2 rounded-md px-2 py-2">
           <span
@@ -196,7 +209,32 @@ export function Sidebar({
   );
 }
 
+function MenuRow({
+  icon,
+  label,
+  onClick,
+  danger,
+}: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm hover:bg-rail-hover ${
+        danger ? "text-red-300" : "text-white/85"
+      }`}
+    >
+      <span className="w-4 flex-none text-center text-white/50">{icon}</span>
+      {label}
+    </button>
+  );
+}
+
 function EnvMenu({ env }: { env: NavEnv }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(env.name);
@@ -230,40 +268,83 @@ function EnvMenu({ env }: { env: NavEnv }) {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-40 mt-1 w-32 rounded-lg border border-white/10 bg-rail p-1 shadow-pop">
-            <button
+          <div className="absolute right-0 z-40 mt-1 w-56 rounded-lg border border-white/10 bg-rail p-1 shadow-pop">
+            <p className="truncate px-2 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-white/35">
+              {env.name}
+            </p>
+
+            {/* Edit */}
+            <MenuRow icon="✎" label="Rename workspace" onClick={() => { setOpen(false); setRenaming(true); }} />
+
+            {/* Organize */}
+            <MenuRow
+              icon="↕"
+              label="Sort boards A–Z"
+              onClick={() => { setOpen(false); start(() => void sortBoards(env.id)); }}
+            />
+
+            <div className="my-1 border-t border-white/10" />
+
+            {/* Create */}
+            <MenuRow
+              icon="＋"
+              label="Add board"
               onClick={() => {
                 setOpen(false);
-                setRenaming(true);
+                const n = window.prompt("New board name:");
+                if (n && n.trim())
+                  start(async () => {
+                    const id = await addBoard(env.id, n.trim());
+                    if (id) router.push(`/boards/${id}`);
+                  });
               }}
-              className="block w-full rounded px-2 py-1.5 text-left text-sm text-white/80 hover:bg-rail-hover"
-            >
-              Rename
-            </button>
-            <button
+            />
+            <MenuRow
+              icon="⊞"
+              label="Add new workspace"
               onClick={() => {
                 setOpen(false);
-                if (confirm(`Delete workspace "${env.name}" and all its boards?`))
-                  start(() => void deleteEnvironment(env.id));
+                const n = window.prompt("New workspace name:");
+                if (n && n.trim()) start(() => void createEnvironment(n.trim()));
               }}
-              className="block w-full rounded px-2 py-1.5 text-left text-sm text-red-300 hover:bg-rail-hover"
-            >
-              Delete
-            </button>
-            <div className="mt-1 flex flex-wrap gap-1 border-t border-white/10 px-1 pt-2">
+            />
+
+            <div className="my-1 border-t border-white/10" />
+
+            {/* Color */}
+            <p className="px-2 pb-1 pt-0.5 text-[11px] text-white/40">Workspace color</p>
+            <div className="flex flex-wrap gap-1 px-2 pb-1">
               {PALETTE.map((c) => (
                 <button
                   key={c}
-                  onClick={() => {
-                    setOpen(false);
-                    start(() => void setEnvironmentColor(env.id, c));
-                  }}
-                  className="h-4 w-4 rounded"
+                  onClick={() => { setOpen(false); start(() => void setEnvironmentColor(env.id, c)); }}
+                  className={`h-4 w-4 rounded ring-offset-1 ring-offset-rail hover:ring-2 hover:ring-white/40 ${
+                    env.color === c ? "ring-2 ring-white" : ""
+                  }`}
                   style={{ background: c }}
                   title="Set color"
                 />
               ))}
             </div>
+
+            <div className="my-1 border-t border-white/10" />
+
+            {/* Archive / Trash */}
+            <MenuRow
+              icon="🗄"
+              label="View archive/trash"
+              onClick={() => { setOpen(false); router.push("/trash"); }}
+            />
+            <MenuRow
+              icon="🗑"
+              label="Archive workspace"
+              danger
+              onClick={() => {
+                setOpen(false);
+                if (confirm(`Archive workspace "${env.name}"? You can restore it from Archive/Trash.`))
+                  start(() => void archiveEnvironment(env.id));
+              }}
+            />
           </div>
         </>
       )}

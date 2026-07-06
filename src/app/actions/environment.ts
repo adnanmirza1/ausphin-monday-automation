@@ -39,6 +39,24 @@ export async function setEnvironmentColor(id: string, color: string) {
   revalidatePath("/", "layout");
 }
 
+// Soft-delete → moves to Archive/Trash (restorable). Uses raw now() via update.
+export async function archiveEnvironment(id: string) {
+  const admin = await requireAdmin();
+  const env = await db.environment.findUnique({ where: { id } });
+  if (!env || env.orgId !== admin.orgId) return;
+  await db.environment.update({ where: { id }, data: { archivedAt: new Date() } });
+  revalidatePath("/", "layout");
+}
+
+export async function restoreEnvironment(id: string) {
+  const admin = await requireAdmin();
+  const env = await db.environment.findUnique({ where: { id } });
+  if (!env || env.orgId !== admin.orgId) return;
+  await db.environment.update({ where: { id }, data: { archivedAt: null } });
+  revalidatePath("/", "layout");
+}
+
+// Permanent delete (from Archive/Trash) — irreversible, cascades to boards/data.
 export async function deleteEnvironment(id: string) {
   const admin = await requireAdmin();
   const env = await db.environment.findUnique({ where: { id } });

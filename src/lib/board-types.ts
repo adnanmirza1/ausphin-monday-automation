@@ -12,6 +12,8 @@ export type ColumnData = {
   name: string;
   type: ColumnType;
   labels: StatusLabel[]; // for status columns
+  description?: string; // optional column description (shown as ⓘ tooltip)
+  required?: boolean; // marks the column as required (red * on header)
   // connection: targetBoardId · mirror: connectionColumnId + sourceColumnId
   targetBoardId?: string;
   connectionColumnId?: string;

@@ -3,7 +3,13 @@
 import { useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import type { BoardData, ColumnData, GroupData, ItemData, PersonLite } from "@/lib/board-types";
-import { COLUMN_TYPE_META, PALETTE, type StatusLabel } from "@/lib/constants";
+import {
+  COLUMN_TYPE_META,
+  COLUMN_TYPES,
+  PALETTE,
+  type ColumnType,
+  type StatusLabel,
+} from "@/lib/constants";
 import { Cell } from "./cells";
 import { useBoardUI } from "./board-ui";
 import {
@@ -20,6 +26,11 @@ import {
   deleteColumn,
   setColumnLabels,
   reorderColumn,
+  duplicateColumn,
+  addColumn,
+  setColumnDescription,
+  setColumnRequired,
+  sortItemsByColumn,
 } from "@/app/actions/board";
 
 const NAME_W = 300;
@@ -344,6 +355,12 @@ function AddItem({ boardId, groupId, color }: { boardId: string; groupId: string
   );
 }
 
+// Column types offered by "Add column to the right" — connection/mirror need
+// the full wiring flow (targetBoard / source column), so they're excluded here.
+const ADD_RIGHT_TYPES = COLUMN_TYPES.filter(
+  (t) => t !== "connection" && t !== "mirror"
+);
+
 function ColumnHeader({
   boardId,
   column,
@@ -354,22 +371,29 @@ function ColumnHeader({
   readOnly: boolean;
 }) {
   const [menu, setMenu] = useState(false);
+  const [sub, setSub] = useState<"main" | "addRight">("main");
   const [renaming, setRenaming] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
+  const [descOpen, setDescOpen] = useState(false);
   const [name, setName] = useState(column.name);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const [, start] = useTransition();
 
-  function toggleMenu() {
-    if (menu) {
-      setMenu(false);
-      return;
-    }
+  function openMenu() {
     const r = btnRef.current?.getBoundingClientRect();
     if (r) setMenuPos({ top: r.bottom + 4, left: r.left + r.width / 2 });
+    setSub("main");
     setMenu(true);
   }
+  function closeMenu() {
+    setMenu(false);
+    setSub("main");
+  }
+  const act = (fn: () => void) => {
+    closeMenu();
+    fn();
+  };
 
   if (renaming) {
     return (
@@ -410,38 +434,121 @@ function ColumnHeader({
           e.dataTransfer.setData("text/column", column.id);
           e.dataTransfer.effectAllowed = "move";
         }}
-        onClick={toggleMenu}
+        onClick={() => (menu ? closeMenu() : openMenu())}
+        title={column.description || undefined}
         className="flex w-full cursor-grab items-center justify-center gap-1 px-2 py-2 text-xs font-semibold text-muted hover:text-body active:cursor-grabbing"
       >
         <span className="font-mono text-[10px] text-muted/60">{COLUMN_TYPE_META[column.type]?.icon}</span>
         <span className="truncate">{column.name}</span>
+        {column.required && <span className="text-danger" title="Required">*</span>}
+        {column.description && <span className="text-muted/60" title={column.description}>ⓘ</span>}
       </button>
       {menu && menuPos &&
         createPortal(
           <>
-            <div className="fixed inset-0 z-40" onClick={() => setMenu(false)} />
+            <div className="fixed inset-0 z-40" onClick={closeMenu} />
             <div
-              className="fixed z-50 w-40 -translate-x-1/2 rounded-lg border border-hair bg-white p-1 shadow-pop"
+              className="fixed z-50 w-52 -translate-x-1/2 rounded-lg border border-hair bg-white p-1 shadow-pop"
               style={{ top: menuPos.top, left: menuPos.left }}
             >
-              <button onClick={() => { setMenu(false); setRenaming(true); }} className={menuItem}>
-                Rename
-              </button>
-              {column.type === "status" && (
-                <button onClick={() => { setMenu(false); setLabelsOpen(true); }} className={menuItem}>
-                  Edit labels
-                </button>
+              {sub === "main" ? (
+                <>
+                  <button onClick={() => act(() => setRenaming(true))} className={menuItem}>
+                    ✎ Rename
+                  </button>
+                  <button onClick={() => act(() => setDescOpen(true))} className={menuItem}>
+                    ≣ Edit description
+                  </button>
+                  {column.type === "status" && (
+                    <button onClick={() => act(() => setLabelsOpen(true))} className={menuItem}>
+                      ◉ Edit labels
+                    </button>
+                  )}
+
+                  <Divider />
+                  <button
+                    onClick={() => act(() => start(() => void sortItemsByColumn(boardId, column.id, "asc")))}
+                    className={menuItem}
+                  >
+                    ↑ Sort ascending
+                  </button>
+                  <button
+                    onClick={() => act(() => start(() => void sortItemsByColumn(boardId, column.id, "desc")))}
+                    className={menuItem}
+                  >
+                    ↓ Sort descending
+                  </button>
+
+                  <Divider />
+                  <button
+                    onClick={() => act(() => start(() => void duplicateColumn(boardId, column.id)))}
+                    className={menuItem}
+                  >
+                    ⧉ Duplicate column
+                  </button>
+                  <button onClick={() => setSub("addRight")} className={`${menuItem} flex items-center justify-between`}>
+                    <span>＋ Add column to the right</span>
+                    <span className="text-muted">›</span>
+                  </button>
+
+                  <Divider />
+                  <button
+                    onClick={() =>
+                      act(() => start(() => void setColumnRequired(boardId, column.id, !column.required)))
+                    }
+                    className={menuItem}
+                  >
+                    {column.required ? "○ Unset required" : "◎ Set as required"}
+                  </button>
+
+                  <Divider />
+                  <button
+                    onClick={() =>
+                      act(() => {
+                        if (confirm(`Delete column "${column.name}"?`))
+                          start(() => void deleteColumn(boardId, column.id));
+                      })
+                    }
+                    className={`${menuItem} text-danger`}
+                  >
+                    🗑 Delete
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setSub("main")}
+                    className={`${menuItem} flex items-center gap-1 text-muted`}
+                  >
+                    ‹ Add to the right
+                  </button>
+                  <Divider />
+                  <div className="grid grid-cols-3 gap-1 p-1">
+                    {ADD_RIGHT_TYPES.map((t) => (
+                      <button
+                        key={t}
+                        onClick={() =>
+                          act(() =>
+                            start(() =>
+                              void addColumn(
+                                boardId,
+                                COLUMN_TYPE_META[t as ColumnType].label,
+                                t as ColumnType,
+                                undefined,
+                                column.id
+                              )
+                            )
+                          )
+                        }
+                        className="flex flex-col items-center gap-0.5 rounded-lg border border-hair px-1 py-1.5 text-[10px] text-muted hover:border-teal/50 hover:text-teal"
+                      >
+                        <span className="font-mono text-sm">{COLUMN_TYPE_META[t as ColumnType].icon}</span>
+                        {COLUMN_TYPE_META[t as ColumnType].label}
+                      </button>
+                    ))}
+                  </div>
+                </>
               )}
-              <button
-                onClick={() => {
-                  setMenu(false);
-                  if (confirm(`Delete column "${column.name}"?`))
-                    start(() => void deleteColumn(boardId, column.id));
-                }}
-                className={`${menuItem} text-danger`}
-              >
-                Delete
-              </button>
             </div>
           </>,
           document.body
@@ -454,11 +561,72 @@ function ColumnHeader({
           onClose={() => setLabelsOpen(false)}
         />
       )}
+      {descOpen && (
+        <DescriptionEditor
+          boardId={boardId}
+          columnId={column.id}
+          columnName={column.name}
+          initial={column.description ?? ""}
+          onClose={() => setDescOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
+function Divider() {
+  return <div className="my-1 h-px bg-hair" />;
+}
+
 const menuItem = "block w-full rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas";
+
+function DescriptionEditor({
+  boardId,
+  columnId,
+  columnName,
+  initial,
+  onClose,
+}: {
+  boardId: string;
+  columnId: string;
+  columnName: string;
+  initial: string;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState(initial);
+  const [, start] = useTransition();
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-4">
+      <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-hair bg-white p-5 shadow-pop">
+        <h2 className="text-lg font-bold text-ink">Column description</h2>
+        <p className="mt-0.5 text-sm text-muted">
+          Shown as a tooltip on the “{columnName}” header.
+        </p>
+        <textarea
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={3}
+          placeholder="What is this column for?"
+          className="mt-3 w-full resize-none rounded-lg border border-hair px-3 py-2 text-sm outline-none focus:border-teal"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">Cancel</button>
+          <button
+            onClick={() => {
+              start(() => void setColumnDescription(boardId, columnId, text));
+              onClose();
+            }}
+            className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function LabelEditor({
   boardId,

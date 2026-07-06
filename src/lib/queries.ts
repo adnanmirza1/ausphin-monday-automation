@@ -1,18 +1,42 @@
 import "server-only";
 import { db } from "@/lib/db";
 
-// Environments + their boards for the sidebar nav.
+// Environments + their boards for the sidebar nav. Archived items are hidden
+// (they live in Archive/Trash until restored or permanently deleted).
 export async function getNav(orgId: string) {
   return db.environment.findMany({
-    where: { orgId },
+    where: { orgId, archivedAt: null },
     orderBy: { position: "asc" },
     include: {
       boards: {
+        where: { archivedAt: null },
         orderBy: { position: "asc" },
         select: { id: true, name: true },
       },
     },
   });
+}
+
+// Archived environments + archived boards (of live environments) for the trash view.
+export async function getArchive(orgId: string) {
+  const [environments, boards] = await Promise.all([
+    db.environment.findMany({
+      where: { orgId, archivedAt: { not: null } },
+      orderBy: { archivedAt: "desc" },
+      select: { id: true, name: true, color: true, archivedAt: true },
+    }),
+    db.board.findMany({
+      where: { archivedAt: { not: null }, environment: { orgId } },
+      orderBy: { archivedAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        archivedAt: true,
+        environment: { select: { id: true, name: true } },
+      },
+    }),
+  ]);
+  return { environments, boards };
 }
 
 // Full board with groups, columns, and items (+cells) for the board view.

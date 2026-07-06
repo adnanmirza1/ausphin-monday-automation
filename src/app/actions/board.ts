@@ -15,6 +15,26 @@ function touch(boardId: string) {
   revalidatePath(`/boards/${boardId}`);
 }
 
+// Merge a patch into a column's JSON config, dropping keys set to undefined.
+async function patchColumnConfig(
+  columnId: string,
+  patch: Record<string, unknown>
+) {
+  const col = await db.column.findUnique({ where: { id: columnId } });
+  let cfg: Record<string, unknown> = {};
+  try {
+    cfg = JSON.parse(col?.config || "{}");
+  } catch {
+    cfg = {};
+  }
+  const next = { ...cfg, ...patch };
+  for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
+  await db.column.update({
+    where: { id: columnId },
+    data: { config: JSON.stringify(next) },
+  });
+}
+
 // ── Items ────────────────────────────────────────────────────
 export async function addItem(boardId: string, groupId: string, name: string) {
   await requireEditor();
@@ -178,16 +198,127 @@ export async function addColumn(
   boardId: string,
   name: string,
   type: ColumnType,
-  extraConfig?: Record<string, unknown>
+  extraConfig?: Record<string, unknown>,
+  afterColumnId?: string
 ) {
   await requireEditor();
   const count = await db.column.count({ where: { boardId } });
   let config = "{}";
   if (type === "status") config = JSON.stringify({ labels: DEFAULT_STATUS_LABELS });
   else if (extraConfig) config = JSON.stringify(extraConfig);
+
+  // Insert right after `afterColumnId` (shifting later columns), else append.
+  let position = count;
+  if (afterColumnId) {
+    const after = await db.column.findUnique({ where: { id: afterColumnId } });
+    if (after) {
+      position = after.position + 1;
+      await db.column.updateMany({
+        where: { boardId, position: { gte: position } },
+        data: { position: { increment: 1 } },
+      });
+    }
+  }
   await db.column.create({
-    data: { boardId, name: name.trim() || "New Column", type, position: count, config },
+    data: { boardId, name: name.trim() || "New Column", type, position, config },
   });
+  touch(boardId);
+}
+
+// Copy a column (name + type + config, not cell values) directly to its right.
+export async function duplicateColumn(boardId: string, columnId: string) {
+  await requireEditor();
+  const col = await db.column.findUnique({ where: { id: columnId } });
+  if (!col) return;
+  await db.column.updateMany({
+    where: { boardId, position: { gt: col.position } },
+    data: { position: { increment: 1 } },
+  });
+  await db.column.create({
+    data: {
+      boardId,
+      name: `${col.name} copy`,
+      type: col.type,
+      config: col.config,
+      position: col.position + 1,
+    },
+  });
+  touch(boardId);
+}
+
+export async function setColumnDescription(
+  boardId: string,
+  columnId: string,
+  description: string
+) {
+  await requireEditor();
+  await patchColumnConfig(columnId, { description: description.trim() || undefined });
+  touch(boardId);
+}
+
+export async function setColumnRequired(
+  boardId: string,
+  columnId: string,
+  required: boolean
+) {
+  await requireEditor();
+  await patchColumnConfig(columnId, { required: required || undefined });
+  touch(boardId);
+}
+
+// Physically reorder items within every group by this column's value.
+// Status columns sort by label order; numbers numerically; else naturally.
+// Empty values always sort last (regardless of direction).
+export async function sortItemsByColumn(
+  boardId: string,
+  columnId: string,
+  dir: "asc" | "desc"
+) {
+  await requireEditor();
+  const col = await db.column.findUnique({ where: { id: columnId } });
+  if (!col) return;
+
+  const labelOrder: Record<string, number> = {};
+  if (col.type === "status") {
+    try {
+      const labels: StatusLabel[] = JSON.parse(col.config).labels ?? [];
+      labels.forEach((l, i) => (labelOrder[l.id] = i));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const rank = (v: string | null): number | string | null => {
+    if (v == null || v === "") return null;
+    if (col.type === "status") return labelOrder[v] ?? Number.MAX_SAFE_INTEGER;
+    if (col.type === "number") {
+      const n = Number(v);
+      return Number.isNaN(n) ? null : n;
+    }
+    return v.toLowerCase();
+  };
+
+  const groups = await db.group.findMany({
+    where: { boardId },
+    select: { id: true },
+  });
+  for (const g of groups) {
+    const items = await db.item.findMany({
+      where: { groupId: g.id },
+      include: { cells: { where: { columnId }, select: { value: true } } },
+    });
+    const keyed = items.map((it) => ({ id: it.id, k: rank(it.cells[0]?.value ?? null) }));
+    keyed.sort((a, b) => {
+      if (a.k == null && b.k == null) return 0;
+      if (a.k == null) return 1; // empties last
+      if (b.k == null) return -1;
+      const r = a.k < b.k ? -1 : a.k > b.k ? 1 : 0;
+      return dir === "desc" ? -r : r;
+    });
+    for (let i = 0; i < keyed.length; i++) {
+      await db.item.update({ where: { id: keyed[i].id }, data: { position: i } });
+    }
+  }
   touch(boardId);
 }
 
@@ -235,10 +366,7 @@ export async function setColumnLabels(
   labels: { id: string; label: string; color: string }[]
 ) {
   await requireEditor();
-  await db.column.update({
-    where: { id: columnId },
-    data: { config: JSON.stringify({ labels }) },
-  });
+  await patchColumnConfig(columnId, { labels });
   touch(boardId);
 }
 

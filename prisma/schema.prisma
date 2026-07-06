@@ -109,12 +109,13 @@ model Invitation {
 // ─────────────────────────── Work OS core ───────────────────────────
 
 model Environment {
-  id        String   @id @default(cuid())
-  orgId     String
-  name      String
-  color     String   @default("#0B7A6F")
-  position  Int      @default(0)
-  createdAt DateTime @default(now())
+  id         String    @id @default(cuid())
+  orgId      String
+  name       String
+  color      String    @default("#0B7A6F")
+  position   Int       @default(0)
+  createdAt  DateTime  @default(now())
+  archivedAt DateTime? // soft-delete → shows in Archive/Trash, restorable
 
   org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   boards Board[]
@@ -127,6 +128,7 @@ model Board {
   description   String   @default("")
   position      Int      @default(0)
   createdAt     DateTime @default(now())
+  archivedAt    DateTime? // soft-delete → shows in Archive/Trash, restorable
 
   // Public intake form (Part 10)
   formEnabled Boolean @default(false)

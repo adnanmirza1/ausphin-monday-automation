@@ -52,10 +52,7 @@ function StatusCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
   const [q, setQ] = useState("");
   const [, start] = useTransition();
   const current = column.labels.find((l) => l.id === cell?.value);
-  const ref = useOutside(() => {
-    setOpen(false);
-    setQ("");
-  });
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   function close() {
     setOpen(false);
@@ -81,8 +78,9 @@ function StatusCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
   );
 
   return (
-    <div className="relative h-full" ref={ref}>
+    <div className="relative h-full">
       <button
+        ref={btnRef}
         disabled={readOnly}
         onClick={() => setOpen((o) => !o)}
         className="flex h-full w-full items-center justify-center px-2 text-xs font-medium text-white transition"
@@ -93,49 +91,51 @@ function StatusCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
         </span>
       </button>
       {open && (
-        <div className="absolute z-30 mt-1 w-48 rounded-lg border border-hair bg-white p-1.5 shadow-lg">
-          <input
-            autoFocus
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && query && !exists) create(query);
-              if (e.key === "Escape") close();
-            }}
-            placeholder="Search or create…"
-            className="mb-1.5 w-full rounded border border-hair px-2 py-1 text-xs outline-none focus:border-teal"
-          />
-          <div className="max-h-52 overflow-y-auto scroll-thin">
-            {filtered.map((l) => (
-              <button
-                key={l.id}
-                onClick={() => pick(l.id)}
-                className="mb-1 block w-full rounded px-2 py-1.5 text-left text-xs font-medium text-white"
-                style={{ background: l.color }}
-              >
-                {l.label}
-              </button>
-            ))}
-            {query && !exists && (
-              <button
-                onClick={() => create(query)}
-                className="mb-1 flex w-full items-center gap-1.5 rounded border border-dashed border-hair px-2 py-1.5 text-left text-xs font-medium text-teal hover:bg-teal/5"
-              >
-                <span className="text-sm leading-none">＋</span>
-                <span className="truncate">Create “{query}”</span>
-              </button>
-            )}
-            {filtered.length === 0 && !query && (
-              <p className="px-2 py-2 text-xs text-muted">No labels yet</p>
-            )}
+        <FloatingPanel anchorRef={btnRef} onClose={close} width={192}>
+          <div className="flex max-h-full flex-col rounded-lg border border-hair bg-white p-1.5 shadow-pop">
+            <input
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && query && !exists) create(query);
+                if (e.key === "Escape") close();
+              }}
+              placeholder="Search or create…"
+              className="mb-1.5 w-full rounded border border-hair px-2 py-1 text-xs outline-none focus:border-teal"
+            />
+            <div className="min-h-0 flex-1 overflow-y-auto scroll-thin">
+              {filtered.map((l) => (
+                <button
+                  key={l.id}
+                  onClick={() => pick(l.id)}
+                  className="mb-1 block w-full rounded px-2 py-1.5 text-left text-xs font-medium text-white"
+                  style={{ background: l.color }}
+                >
+                  {l.label}
+                </button>
+              ))}
+              {query && !exists && (
+                <button
+                  onClick={() => create(query)}
+                  className="mb-1 flex w-full items-center gap-1.5 rounded border border-dashed border-hair px-2 py-1.5 text-left text-xs font-medium text-teal hover:bg-teal/5"
+                >
+                  <span className="text-sm leading-none">＋</span>
+                  <span className="truncate">Create “{query}”</span>
+                </button>
+              )}
+              {filtered.length === 0 && !query && (
+                <p className="px-2 py-2 text-xs text-muted">No labels yet</p>
+              )}
+            </div>
+            <button
+              onClick={() => pick(null)}
+              className="mt-0.5 block w-full rounded px-2 py-1 text-left text-xs text-muted hover:bg-canvas"
+            >
+              Clear
+            </button>
           </div>
-          <button
-            onClick={() => pick(null)}
-            className="mt-0.5 block w-full rounded px-2 py-1 text-left text-xs text-muted hover:bg-canvas"
-          >
-            Clear
-          </button>
-        </div>
+        </FloatingPanel>
       )}
     </div>
   );
@@ -146,7 +146,7 @@ function PersonCell({ boardId, itemId, column, cell, people, readOnly }: Ctx) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [, start] = useTransition();
-  const ref = useOutside(() => setOpen(false));
+  const btnRef = useRef<HTMLButtonElement>(null);
   const person = cell?.person;
 
   function pick(id: string | null) {
@@ -160,8 +160,9 @@ function PersonCell({ boardId, itemId, column, cell, people, readOnly }: Ctx) {
   );
 
   return (
-    <div className="relative h-full" ref={ref}>
+    <div className="relative h-full">
       <button
+        ref={btnRef}
         disabled={readOnly}
         onClick={() => setOpen((o) => !o)}
         className="flex h-full w-full items-center justify-center gap-1.5 px-2"
@@ -181,7 +182,8 @@ function PersonCell({ boardId, itemId, column, cell, people, readOnly }: Ctx) {
         )}
       </button>
       {open && (
-        <div className="absolute z-30 mt-1 w-56 rounded-lg border border-hair bg-white p-2 shadow-lg">
+        <FloatingPanel anchorRef={btnRef} onClose={() => { setOpen(false); setQ(""); }} width={224}>
+          <div className="flex max-h-full flex-col rounded-lg border border-hair bg-white p-2 shadow-pop">
           <input
             autoFocus
             value={q}
@@ -189,7 +191,7 @@ function PersonCell({ boardId, itemId, column, cell, people, readOnly }: Ctx) {
             placeholder="Search people…"
             className="mb-2 w-full rounded border border-hair px-2 py-1 text-xs outline-none focus:border-teal"
           />
-          <div className="max-h-52 overflow-y-auto scroll-thin">
+          <div className="min-h-0 flex-1 overflow-y-auto scroll-thin">
             {filtered.map((p) => (
               <button
                 key={p.id}
@@ -217,7 +219,8 @@ function PersonCell({ boardId, itemId, column, cell, people, readOnly }: Ctx) {
               Remove
             </button>
           )}
-        </div>
+          </div>
+        </FloatingPanel>
       )}
     </div>
   );
@@ -259,7 +262,7 @@ function ConnectionCell({ boardId, itemId, column, cell, readOnly, options }: Ct
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [, start] = useTransition();
-  const ref = useOutside(() => setOpen(false));
+  const btnRef = useRef<HTMLButtonElement>(null);
   const opts = options ?? [];
 
   function pick(id: string | null) {
@@ -270,8 +273,9 @@ function ConnectionCell({ boardId, itemId, column, cell, readOnly, options }: Ct
   const filtered = opts.filter((o) => o.name.toLowerCase().includes(q.toLowerCase()));
 
   return (
-    <div className="relative h-full" ref={ref}>
+    <div className="relative h-full">
       <button
+        ref={btnRef}
         disabled={readOnly}
         onClick={() => setOpen((o) => !o)}
         className="flex h-full w-full items-center justify-center px-2"
@@ -285,7 +289,8 @@ function ConnectionCell({ boardId, itemId, column, cell, readOnly, options }: Ct
         )}
       </button>
       {open && (
-        <div className="absolute z-30 mt-1 w-56 rounded-lg border border-hair bg-white p-2 shadow-pop">
+        <FloatingPanel anchorRef={btnRef} onClose={() => { setOpen(false); setQ(""); }} width={224}>
+          <div className="flex max-h-full flex-col rounded-lg border border-hair bg-white p-2 shadow-pop">
           <input
             autoFocus
             value={q}
@@ -293,7 +298,7 @@ function ConnectionCell({ boardId, itemId, column, cell, readOnly, options }: Ct
             placeholder="Search items…"
             className="mb-2 w-full rounded border border-hair px-2 py-1 text-xs outline-none focus:border-teal"
           />
-          <div className="max-h-52 overflow-y-auto scroll-thin">
+          <div className="min-h-0 flex-1 overflow-y-auto scroll-thin">
             {filtered.map((o) => (
               <button
                 key={o.id}
@@ -313,7 +318,8 @@ function ConnectionCell({ boardId, itemId, column, cell, readOnly, options }: Ct
               Unlink
             </button>
           )}
-        </div>
+          </div>
+        </FloatingPanel>
       )}
     </div>
   );
@@ -514,14 +520,59 @@ function SignaturePad({
 }
 
 /* ── outside-click hook ─────────────────────────────── */
-function useOutside(cb: () => void) {
-  const ref = useRef<HTMLDivElement>(null);
+// Floating dropdown rendered in a body-level portal so it is never clipped by
+// the board card's `overflow-hidden`. Positions itself just below the anchor,
+// flips above when there isn't room, and clamps inside the viewport.
+function FloatingPanel({
+  anchorRef,
+  onClose,
+  width = 208,
+  children,
+}: {
+  anchorRef: React.RefObject<HTMLElement | null>;
+  onClose: () => void;
+  width?: number;
+  children: React.ReactNode;
+}) {
+  const [pos, setPos] = useState<{ top: number; left: number; maxH: number } | null>(null);
+
   useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) cb();
+    const el = anchorRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const margin = 8;
+    const below = window.innerHeight - r.bottom - margin;
+    const above = r.top - margin;
+    const openUp = below < 200 && above > below;
+    let left = r.left;
+    if (left + width > window.innerWidth - margin) left = window.innerWidth - width - margin;
+    if (left < margin) left = margin;
+    setPos({
+      top: openUp ? Math.max(margin, r.top - 4) : r.bottom + 4,
+      left,
+      maxH: openUp ? above : below,
+    });
+  }, [anchorRef, width]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
     }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  });
-  return ref;
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  if (!pos) return null;
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-40" onMouseDown={onClose} />
+      <div
+        className="fixed z-50"
+        style={{ top: pos.top, left: pos.left, width, maxHeight: pos.maxH }}
+      >
+        {children}
+      </div>
+    </>,
+    document.body
+  );
 }

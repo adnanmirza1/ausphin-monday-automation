@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import type { BoardData, PersonLite } from "@/lib/board-types";
-import { renameBoard, deleteBoard } from "@/app/actions/board";
+import { renameBoard, archiveBoard } from "@/app/actions/board";
 import { TableView } from "./table-view";
 import { KanbanView } from "./kanban-view";
 import { CalendarView } from "./calendar-view";
@@ -361,12 +361,12 @@ function BoardTitle({ boardId, name, readOnly }: { boardId: string; name: string
             <button
               onClick={() => {
                 setMenu(false);
-                if (confirm(`Delete board "${name}" and all its items?`))
-                  start(async () => { await deleteBoard(boardId); router.push("/"); });
+                if (confirm(`Archive board "${name}"? You can restore it from Archive/Trash.`))
+                  start(async () => { await archiveBoard(boardId); router.push("/"); });
               }}
               className="block w-full rounded px-2 py-1.5 text-left text-sm text-danger hover:bg-canvas"
             >
-              Delete board
+              Archive board
             </button>
           </div>
         </>
