@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireEditor } from "@/lib/guard";
-import { DEFAULT_STATUS_LABELS, type ColumnType } from "@/lib/constants";
+import {
+  DEFAULT_STATUS_LABELS,
+  PALETTE,
+  type ColumnType,
+  type StatusLabel,
+} from "@/lib/constants";
 import { runAutomations } from "@/lib/automation";
 
 function touch(boardId: string) {
@@ -237,6 +242,64 @@ export async function setColumnLabels(
   touch(boardId);
 }
 
+// Create a new status label on the fly (from a status cell) and, when an item
+// is given, assign it to that cell in one step. Reuses an existing label when
+// the text matches (case-insensitive) so we don't create duplicates.
+export async function addStatusLabel(
+  boardId: string,
+  columnId: string,
+  itemId: string | null,
+  label: string,
+  color?: string
+) {
+  await requireEditor();
+  const trimmed = label.trim();
+  if (!trimmed) return;
+
+  const column = await db.column.findUnique({ where: { id: columnId } });
+  if (!column || column.type !== "status") return;
+
+  let cfg: { labels?: StatusLabel[] } = {};
+  try {
+    cfg = JSON.parse(column.config || "{}");
+  } catch {
+    cfg = {};
+  }
+  const labels = cfg.labels ?? [];
+
+  const existing = labels.find(
+    (l) => l.label.trim().toLowerCase() === trimmed.toLowerCase()
+  );
+  let labelId: string;
+  if (existing) {
+    labelId = existing.id;
+  } else {
+    labelId = `l${Math.random().toString(36).slice(2, 8)}`;
+    const newColor = color || PALETTE[labels.length % PALETTE.length];
+    labels.push({ id: labelId, label: trimmed, color: newColor });
+    await db.column.update({
+      where: { id: columnId },
+      data: { config: JSON.stringify({ ...cfg, labels }) },
+    });
+  }
+
+  if (itemId) {
+    await db.cell.upsert({
+      where: { itemId_columnId: { itemId, columnId } },
+      create: { itemId, columnId, value: labelId },
+      update: { value: labelId },
+    });
+    await runAutomations({
+      type: "status_changes",
+      boardId,
+      itemId,
+      columnId,
+      value: labelId,
+    });
+  }
+  touch(boardId);
+}
+
 // ── Boards ───────────────────────────────────────────────────
 export async function renameBoard(boardId: string, name: string) {
   await requireEditor();
@@ -245,9 +308,37 @@ export async function renameBoard(boardId: string, name: string) {
   revalidatePath("/", "layout");
 }
 
+// Soft-delete → moves to Archive/Trash (restorable).
+export async function archiveBoard(boardId: string) {
+  await requireEditor();
+  await db.board.update({ where: { id: boardId }, data: { archivedAt: new Date() } });
+  revalidatePath("/", "layout");
+}
+
+export async function restoreBoard(boardId: string) {
+  await requireEditor();
+  await db.board.update({ where: { id: boardId }, data: { archivedAt: null } });
+  revalidatePath("/", "layout");
+}
+
+// Permanent delete (from Archive/Trash) — irreversible, cascades to all board data.
 export async function deleteBoard(boardId: string) {
   await requireEditor();
   await db.board.delete({ where: { id: boardId } });
+  revalidatePath("/", "layout");
+}
+
+// Sort a workspace's boards alphabetically (A–Z) by rewriting their positions.
+export async function sortBoards(environmentId: string) {
+  await requireEditor();
+  const boards = await db.board.findMany({
+    where: { environmentId },
+    select: { id: true, name: true },
+  });
+  boards.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  for (let i = 0; i < boards.length; i++) {
+    await db.board.update({ where: { id: boards[i].id }, data: { position: i } });
+  }
   revalidatePath("/", "layout");
 }
 

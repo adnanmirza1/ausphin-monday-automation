@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { ColumnData, CellData, PersonLite } from "@/lib/board-types";
-import { setCell, setPersonCell } from "@/app/actions/board";
+import { setCell, setPersonCell, addStatusLabel } from "@/app/actions/board";
 import { createPortal } from "react-dom";
 
 type Ctx = {
@@ -49,14 +49,36 @@ function initials(name: string) {
 /* ── Status ─────────────────────────────────────────── */
 function StatusCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
   const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
   const [, start] = useTransition();
   const current = column.labels.find((l) => l.id === cell?.value);
-  const ref = useOutside(() => setOpen(false));
-
-  function pick(id: string | null) {
+  const ref = useOutside(() => {
     setOpen(false);
+    setQ("");
+  });
+
+  function close() {
+    setOpen(false);
+    setQ("");
+  }
+  function pick(id: string | null) {
+    close();
     start(() => void setCell(boardId, itemId, column.id, id));
   }
+  function create(label: string) {
+    close();
+    start(() => void addStatusLabel(boardId, column.id, itemId, label));
+  }
+
+  const query = q.trim();
+  const filtered = query
+    ? column.labels.filter((l) =>
+        l.label.toLowerCase().includes(query.toLowerCase())
+      )
+    : column.labels;
+  const exists = column.labels.some(
+    (l) => l.label.trim().toLowerCase() === query.toLowerCase()
+  );
 
   return (
     <div className="relative h-full" ref={ref}>
@@ -71,20 +93,45 @@ function StatusCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
         </span>
       </button>
       {open && (
-        <div className="absolute z-30 mt-1 w-44 rounded-lg border border-hair bg-white p-1.5 shadow-lg">
-          {column.labels.map((l) => (
-            <button
-              key={l.id}
-              onClick={() => pick(l.id)}
-              className="mb-1 block w-full rounded px-2 py-1.5 text-left text-xs font-medium text-white"
-              style={{ background: l.color }}
-            >
-              {l.label}
-            </button>
-          ))}
+        <div className="absolute z-30 mt-1 w-48 rounded-lg border border-hair bg-white p-1.5 shadow-lg">
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && query && !exists) create(query);
+              if (e.key === "Escape") close();
+            }}
+            placeholder="Search or create…"
+            className="mb-1.5 w-full rounded border border-hair px-2 py-1 text-xs outline-none focus:border-teal"
+          />
+          <div className="max-h-52 overflow-y-auto scroll-thin">
+            {filtered.map((l) => (
+              <button
+                key={l.id}
+                onClick={() => pick(l.id)}
+                className="mb-1 block w-full rounded px-2 py-1.5 text-left text-xs font-medium text-white"
+                style={{ background: l.color }}
+              >
+                {l.label}
+              </button>
+            ))}
+            {query && !exists && (
+              <button
+                onClick={() => create(query)}
+                className="mb-1 flex w-full items-center gap-1.5 rounded border border-dashed border-hair px-2 py-1.5 text-left text-xs font-medium text-teal hover:bg-teal/5"
+              >
+                <span className="text-sm leading-none">＋</span>
+                <span className="truncate">Create “{query}”</span>
+              </button>
+            )}
+            {filtered.length === 0 && !query && (
+              <p className="px-2 py-2 text-xs text-muted">No labels yet</p>
+            )}
+          </div>
           <button
             onClick={() => pick(null)}
-            className="block w-full rounded px-2 py-1 text-left text-xs text-muted hover:bg-canvas"
+            className="mt-0.5 block w-full rounded px-2 py-1 text-left text-xs text-muted hover:bg-canvas"
           >
             Clear
           </button>

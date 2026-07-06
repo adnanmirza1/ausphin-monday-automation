@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import type { BoardData, ColumnData, GroupData, ItemData, PersonLite } from "@/lib/board-types";
 import { COLUMN_TYPE_META, PALETTE, type StatusLabel } from "@/lib/constants";
 import { Cell } from "./cells";
@@ -356,7 +357,19 @@ function ColumnHeader({
   const [renaming, setRenaming] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [name, setName] = useState(column.name);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
   const [, start] = useTransition();
+
+  function toggleMenu() {
+    if (menu) {
+      setMenu(false);
+      return;
+    }
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setMenuPos({ top: r.bottom + 4, left: r.left + r.width / 2 });
+    setMenu(true);
+  }
 
   if (renaming) {
     return (
@@ -390,43 +403,49 @@ function ColumnHeader({
       }}
     >
       <button
+        ref={btnRef}
         disabled={readOnly}
         draggable={!readOnly}
         onDragStart={(e) => {
           e.dataTransfer.setData("text/column", column.id);
           e.dataTransfer.effectAllowed = "move";
         }}
-        onClick={() => setMenu((m) => !m)}
+        onClick={toggleMenu}
         className="flex w-full cursor-grab items-center justify-center gap-1 px-2 py-2 text-xs font-semibold text-muted hover:text-body active:cursor-grabbing"
       >
         <span className="font-mono text-[10px] text-muted/60">{COLUMN_TYPE_META[column.type]?.icon}</span>
         <span className="truncate">{column.name}</span>
       </button>
-      {menu && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setMenu(false)} />
-          <div className="absolute left-1/2 top-8 z-30 w-40 -translate-x-1/2 rounded-lg border border-hair bg-white p-1 shadow-pop">
-            <button onClick={() => { setMenu(false); setRenaming(true); }} className={menuItem}>
-              Rename
-            </button>
-            {column.type === "status" && (
-              <button onClick={() => { setMenu(false); setLabelsOpen(true); }} className={menuItem}>
-                Edit labels
-              </button>
-            )}
-            <button
-              onClick={() => {
-                setMenu(false);
-                if (confirm(`Delete column "${column.name}"?`))
-                  start(() => void deleteColumn(boardId, column.id));
-              }}
-              className={`${menuItem} text-danger`}
+      {menu && menuPos &&
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setMenu(false)} />
+            <div
+              className="fixed z-50 w-40 -translate-x-1/2 rounded-lg border border-hair bg-white p-1 shadow-pop"
+              style={{ top: menuPos.top, left: menuPos.left }}
             >
-              Delete
-            </button>
-          </div>
-        </>
-      )}
+              <button onClick={() => { setMenu(false); setRenaming(true); }} className={menuItem}>
+                Rename
+              </button>
+              {column.type === "status" && (
+                <button onClick={() => { setMenu(false); setLabelsOpen(true); }} className={menuItem}>
+                  Edit labels
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setMenu(false);
+                  if (confirm(`Delete column "${column.name}"?`))
+                    start(() => void deleteColumn(boardId, column.id));
+                }}
+                className={`${menuItem} text-danger`}
+              >
+                Delete
+              </button>
+            </div>
+          </>,
+          document.body
+        )}
       {labelsOpen && (
         <LabelEditor
           boardId={boardId}
@@ -461,9 +480,9 @@ function LabelEditor({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 flex max-h-[85vh] w-full max-w-sm flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <h2 className="text-lg font-bold text-ink">Edit status labels</h2>
-        <div className="mt-3 flex flex-col gap-2">
+        <div className="mt-3 flex flex-col gap-2 overflow-y-auto">
           {labels.map((l, i) => (
             <div key={l.id} className="flex items-center gap-2">
               <input
