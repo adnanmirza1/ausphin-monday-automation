@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { ColumnData, CellData, PersonLite } from "@/lib/board-types";
 import { setCell, setPersonCell, addStatusLabel } from "@/app/actions/board";
+import { PALETTE } from "@/lib/constants";
 import { createPortal } from "react-dom";
 
 type Ctx = {
@@ -50,6 +51,9 @@ function initials(name: string) {
 function StatusCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+  const [newColor, setNewColor] = useState(PALETTE[0]);
   const [, start] = useTransition();
   const current = column.labels.find((l) => l.id === cell?.value);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -57,14 +61,22 @@ function StatusCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
   function close() {
     setOpen(false);
     setQ("");
+    setAdding(false);
+    setNewLabel("");
   }
   function pick(id: string | null) {
     close();
     start(() => void setCell(boardId, itemId, column.id, id));
   }
-  function create(label: string) {
+  function create(label: string, color?: string) {
     close();
-    start(() => void addStatusLabel(boardId, column.id, itemId, label));
+    start(() => void addStatusLabel(boardId, column.id, itemId, label, color));
+  }
+  // Open the add panel, pre-filling from whatever was typed in the search box.
+  function startAdding() {
+    setNewLabel(q.trim());
+    setNewColor(PALETTE[column.labels.length % PALETTE.length]);
+    setAdding(true);
   }
 
   const query = q.trim();
@@ -91,49 +103,109 @@ function StatusCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
         </span>
       </button>
       {open && (
-        <FloatingPanel anchorRef={btnRef} onClose={close} width={192}>
+        <FloatingPanel anchorRef={btnRef} onClose={close} width={204}>
           <div className="flex max-h-full flex-col rounded-lg border border-hair bg-white p-1.5 shadow-pop">
-            <input
-              autoFocus
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && query && !exists) create(query);
-                if (e.key === "Escape") close();
-              }}
-              placeholder="Search or create…"
-              className="mb-1.5 w-full rounded border border-hair px-2 py-1 text-xs outline-none focus:border-teal"
-            />
-            <div className="min-h-0 flex-1 overflow-y-auto scroll-thin">
-              {filtered.map((l) => (
-                <button
-                  key={l.id}
-                  onClick={() => pick(l.id)}
-                  className="mb-1 block w-full rounded px-2 py-1.5 text-left text-xs font-medium text-white"
-                  style={{ background: l.color }}
+            {adding ? (
+              /* ── Add-a-new-label panel (name + colour) ── */
+              <div className="flex flex-col gap-2 p-1">
+                <p className="text-xs font-semibold text-body">New label</p>
+                <input
+                  autoFocus
+                  value={newLabel}
+                  onChange={(e) => setNewLabel(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newLabel.trim()) create(newLabel.trim(), newColor);
+                    if (e.key === "Escape") setAdding(false);
+                  }}
+                  placeholder="Label name"
+                  className="w-full rounded border border-hair px-2 py-1 text-xs outline-none focus:border-teal"
+                />
+                <div className="flex flex-wrap gap-1">
+                  {PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => setNewColor(c)}
+                      className={`h-5 w-5 rounded ${newColor === c ? "ring-2 ring-ink/40 ring-offset-1" : ""}`}
+                      style={{ background: c }}
+                    />
+                  ))}
+                </div>
+                {/* live preview */}
+                <span
+                  className="rounded px-2 py-1 text-center text-xs font-medium text-white"
+                  style={{ background: newColor }}
                 >
-                  {l.label}
-                </button>
-              ))}
-              {query && !exists && (
-                <button
-                  onClick={() => create(query)}
-                  className="mb-1 flex w-full items-center gap-1.5 rounded border border-dashed border-hair px-2 py-1.5 text-left text-xs font-medium text-teal hover:bg-teal/5"
-                >
-                  <span className="text-sm leading-none">＋</span>
-                  <span className="truncate">Create “{query}”</span>
-                </button>
-              )}
-              {filtered.length === 0 && !query && (
-                <p className="px-2 py-2 text-xs text-muted">No labels yet</p>
-              )}
-            </div>
-            <button
-              onClick={() => pick(null)}
-              className="mt-0.5 block w-full rounded px-2 py-1 text-left text-xs text-muted hover:bg-canvas"
-            >
-              Clear
-            </button>
+                  {newLabel.trim() || "Preview"}
+                </span>
+                <div className="flex justify-end gap-1.5">
+                  <button
+                    onClick={() => setAdding(false)}
+                    className="rounded px-2 py-1 text-xs text-muted hover:bg-canvas"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    disabled={!newLabel.trim()}
+                    onClick={() => create(newLabel.trim(), newColor)}
+                    className="rounded bg-teal px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <input
+                  autoFocus
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && query && !exists) create(query);
+                    if (e.key === "Escape") close();
+                  }}
+                  placeholder="Search or create…"
+                  className="mb-1.5 w-full rounded border border-hair px-2 py-1 text-xs outline-none focus:border-teal"
+                />
+                <div className="min-h-0 flex-1 overflow-y-auto scroll-thin">
+                  {filtered.map((l) => (
+                    <button
+                      key={l.id}
+                      onClick={() => pick(l.id)}
+                      className="mb-1 block w-full rounded px-2 py-1.5 text-left text-xs font-medium text-white"
+                      style={{ background: l.color }}
+                    >
+                      {l.label}
+                    </button>
+                  ))}
+                  {query && !exists && (
+                    <button
+                      onClick={() => create(query)}
+                      className="mb-1 flex w-full items-center gap-1.5 rounded border border-dashed border-hair px-2 py-1.5 text-left text-xs font-medium text-teal hover:bg-teal/5"
+                    >
+                      <span className="text-sm leading-none">＋</span>
+                      <span className="truncate">Create “{query}”</span>
+                    </button>
+                  )}
+                  {filtered.length === 0 && !query && (
+                    <p className="px-2 py-2 text-xs text-muted">No labels yet</p>
+                  )}
+                </div>
+                <div className="mt-1 border-t border-hair pt-1">
+                  <button
+                    onClick={startAdding}
+                    className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-xs font-medium text-teal hover:bg-teal/5"
+                  >
+                    <span className="text-sm leading-none">＋</span> Add label
+                  </button>
+                  <button
+                    onClick={() => pick(null)}
+                    className="block w-full rounded px-2 py-1 text-left text-xs text-muted hover:bg-canvas"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </FloatingPanel>
       )}
