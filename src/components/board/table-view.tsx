@@ -30,6 +30,7 @@ import {
   addColumn,
   setColumnDescription,
   setColumnRequired,
+  setColumnDefault,
   sortItemsByColumn,
 } from "@/app/actions/board";
 
@@ -63,6 +64,7 @@ export function TableView({
   connectionOptions = {},
   rowHeight = "default",
   colorBy = null,
+  pinFirst = false,
 }: {
   board: BoardData;
   people: PersonLite[];
@@ -70,6 +72,7 @@ export function TableView({
   connectionOptions?: ConnOpts;
   rowHeight?: RowHeight;
   colorBy?: string | null;
+  pinFirst?: boolean;
 }) {
   return (
     <div className="min-w-max p-4 sm:p-6">
@@ -83,12 +86,16 @@ export function TableView({
           connectionOptions={connectionOptions}
           rowHeight={rowHeight}
           colorBy={colorBy}
+          pinFirst={pinFirst}
         />
       ))}
       {!readOnly && <AddGroup boardId={board.id} />}
     </div>
   );
 }
+
+// Sticky classes for the pinned Item column (header + rows).
+const PIN_CLS = "sticky left-0 z-10";
 
 function GroupBlock({
   board,
@@ -98,6 +105,7 @@ function GroupBlock({
   connectionOptions,
   rowHeight,
   colorBy,
+  pinFirst,
 }: {
   board: BoardData;
   group: GroupData;
@@ -106,6 +114,7 @@ function GroupBlock({
   connectionOptions: ConnOpts;
   rowHeight: RowHeight;
   colorBy: string | null;
+  pinFirst: boolean;
 }) {
   const [editingName, setEditingName] = useState(false);
   const [name, setName] = useState(group.name);
@@ -221,12 +230,15 @@ function GroupBlock({
           const draggedId = e.dataTransfer.getData("text/plain");
           if (draggedId) start(() => void reorderItem(board.id, draggedId, group.id, null));
         }}
-        className="overflow-hidden rounded-xl border border-hair bg-white shadow-soft"
+        className={`rounded-xl border border-hair bg-white shadow-soft ${pinFirst ? "" : "overflow-hidden"}`}
         style={{ width: rowWidth }}
       >
         {/* Column header */}
         <div className="flex items-stretch border-b border-hair bg-canvas/60">
-          <div style={{ width: NAME_W }} className="flex items-center gap-1.5 px-3 py-2">
+          <div
+            style={{ width: NAME_W }}
+            className={`flex items-center gap-1.5 px-3 py-2 ${pinFirst ? `${PIN_CLS} z-20 bg-canvas` : ""}`}
+          >
             <span className="h-full w-1.5 flex-none opacity-0" />
             <span className="text-xs font-semibold text-muted">Item</span>
           </div>
@@ -248,6 +260,7 @@ function GroupBlock({
             connectionOptions={connectionOptions}
             rowHeight={rowHeight}
             colorBy={colorBy}
+            pinFirst={pinFirst}
           />
         ))}
 
@@ -272,6 +285,7 @@ function Row({
   connectionOptions,
   rowHeight,
   colorBy,
+  pinFirst,
 }: {
   board: BoardData;
   group: GroupData;
@@ -281,6 +295,7 @@ function Row({
   connectionOptions: ConnOpts;
   rowHeight: RowHeight;
   colorBy: string | null;
+  pinFirst: boolean;
 }) {
   const [name, setName] = useState(item.name);
   const [over, setOver] = useState(false);
@@ -310,7 +325,10 @@ function Row({
         tint ? "" : "hover:bg-canvas/50"
       } ${over ? "border-t-2 border-t-teal" : ""}`}
     >
-      <div className="flex items-center" style={{ width: NAME_W }}>
+      <div
+        className={`flex items-center ${pinFirst ? PIN_CLS : ""}`}
+        style={{ width: NAME_W, background: pinFirst ? tint ?? "#ffffff" : undefined }}
+      >
         <span className="h-full w-1.5 flex-none" style={{ background: group.color }} />
         {!readOnly && (
           <span
@@ -411,6 +429,7 @@ function ColumnHeader({
   const [renaming, setRenaming] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [descOpen, setDescOpen] = useState(false);
+  const [defaultOpen, setDefaultOpen] = useState(false);
   const [name, setName] = useState(column.name);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -536,6 +555,9 @@ function ColumnHeader({
                   >
                     {column.required ? "○ Unset required" : "◎ Set as required"}
                   </button>
+                  <button onClick={() => act(() => setDefaultOpen(true))} className={menuItem}>
+                    ◆ Default value{column.defaultValue ? " ✓" : ""}
+                  </button>
 
                   <Divider />
                   <button
@@ -606,6 +628,108 @@ function ColumnHeader({
           onClose={() => setDescOpen(false)}
         />
       )}
+      {defaultOpen && (
+        <DefaultValueEditor column={column} boardId={boardId} onClose={() => setDefaultOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+// Editor for a column's default value applied to new items. Status shows a
+// label picker; date/number/text use the matching input. Types that can't
+// carry a simple preset (person/connection/mirror/file/signature) are skipped.
+function DefaultValueEditor({
+  column,
+  boardId,
+  onClose,
+}: {
+  column: ColumnData;
+  boardId: string;
+  onClose: () => void;
+}) {
+  const [value, setValue] = useState(column.defaultValue ?? "");
+  const [, start] = useTransition();
+  const supported = ["status", "text", "longtext", "number", "date", "email", "phone"].includes(
+    column.type
+  );
+  const inputType =
+    column.type === "number"
+      ? "number"
+      : column.type === "date"
+      ? "date"
+      : column.type === "email"
+      ? "email"
+      : column.type === "phone"
+      ? "tel"
+      : "text";
+
+  function save(v: string) {
+    start(() => void setColumnDefault(boardId, column.id, v || null));
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-4">
+      <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-hair bg-white p-5 shadow-pop">
+        <h2 className="text-lg font-bold text-ink">Default value</h2>
+        <p className="mt-0.5 text-sm text-muted">
+          Applied to “{column.name}” whenever a new item is added.
+        </p>
+
+        {!supported ? (
+          <p className="mt-4 text-sm text-muted">
+            Default values aren’t available for {COLUMN_TYPE_META[column.type]?.label} columns.
+          </p>
+        ) : column.type === "status" ? (
+          <div className="mt-3 flex flex-col gap-1.5">
+            {column.labels.map((l) => (
+              <button
+                key={l.id}
+                onClick={() => save(l.id)}
+                className={`rounded px-2 py-1.5 text-left text-xs font-medium text-white ${
+                  value === l.id ? "ring-2 ring-ink/40" : ""
+                }`}
+                style={{ background: l.color }}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <input
+            autoFocus
+            type={inputType}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && save(value)}
+            placeholder="Default…"
+            className="mt-3 w-full rounded-lg border border-hair px-3 py-2 text-sm outline-none focus:border-teal"
+          />
+        )}
+
+        <div className="mt-4 flex justify-between">
+          <button
+            onClick={() => save("")}
+            className="rounded-lg px-3 py-2 text-sm text-muted hover:text-danger"
+          >
+            Clear default
+          </button>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">
+              Cancel
+            </button>
+            {supported && column.type !== "status" && (
+              <button
+                onClick={() => save(value)}
+                className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep"
+              >
+                Save
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -44,6 +44,31 @@ export async function addItem(boardId: string, groupId: string, name: string) {
   const item = await db.item.create({
     data: { boardId, groupId, name: trimmed, position: count },
   });
+
+  // Seed cells from any columns that carry a default value.
+  const columns = await db.column.findMany({ where: { boardId } });
+  const seeds = columns
+    .map((c) => {
+      let dv: string | undefined;
+      try {
+        dv = JSON.parse(c.config || "{}").defaultValue;
+      } catch {
+        dv = undefined;
+      }
+      return dv ? { columnId: c.id, type: c.type, value: dv } : null;
+    })
+    .filter((s): s is { columnId: string; type: string; value: string } => !!s);
+  if (seeds.length) {
+    await db.cell.createMany({
+      data: seeds.map((s) => ({
+        itemId: item.id,
+        columnId: s.columnId,
+        value: s.value,
+        personId: s.type === "person" ? s.value : null,
+      })),
+    });
+  }
+
   await runAutomations({ type: "item_created", boardId, itemId: item.id });
   touch(boardId);
 }
@@ -263,6 +288,16 @@ export async function setColumnRequired(
 ) {
   await requireEditor();
   await patchColumnConfig(columnId, { required: required || undefined });
+  touch(boardId);
+}
+
+export async function setColumnDefault(
+  boardId: string,
+  columnId: string,
+  value: string | null
+) {
+  await requireEditor();
+  await patchColumnConfig(columnId, { defaultValue: value || undefined });
   touch(boardId);
 }
 

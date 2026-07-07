@@ -72,6 +72,7 @@ export default async function BoardPage({
       labels: c.type === "status" ? ((cfg.labels as StatusLabel[]) ?? []) : [],
       description: (cfg.description as string) || undefined,
       required: (cfg.required as boolean) || undefined,
+      defaultValue: (cfg.defaultValue as string) || undefined,
       targetBoardId: (cfg.targetBoardId as string) ?? undefined,
       connectionColumnId: (cfg.connectionColumnId as string) ?? undefined,
       sourceColumnId: (cfg.sourceColumnId as string) ?? undefined,

@@ -66,6 +66,7 @@ export function BoardView({
   const [moreOpen, setMoreOpen] = useState(false);
   const [rowHeight, setRowHeight] = useState<RowHeight>("default");
   const [colorBy, setColorBy] = useState<string | null>(null);
+  const [pinFirst, setPinFirst] = useState(false);
   const [saving, setSaving] = useState(false);
   const [, start] = useTransition();
 
@@ -271,6 +272,14 @@ export function BoardView({
 
             {/* ⋯ more view options: item height + conditional coloring */}
             <Popover open={moreOpen} setOpen={setMoreOpen} label="⋯">
+              <label className="mb-3 flex items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-canvas">
+                <input
+                  type="checkbox"
+                  checked={pinFirst}
+                  onChange={() => setPinFirst((p) => !p)}
+                />
+                Freeze first column
+              </label>
               <p className="mb-1.5 text-xs font-semibold text-body">Item height</p>
               <div className="mb-3 inline-flex rounded-lg border border-hair p-0.5">
                 {(["compact", "default", "tall"] as RowHeight[]).map((h) => (
@@ -341,6 +350,7 @@ export function BoardView({
               connectionOptions={connectionOptions}
               rowHeight={rowHeight}
               colorBy={colorBy}
+              pinFirst={pinFirst}
             />
           )}
           {mode === "kanban" && <KanbanView board={view} people={people} readOnly={readOnly} />}

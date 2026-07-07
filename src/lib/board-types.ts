@@ -14,6 +14,7 @@ export type ColumnData = {
   labels: StatusLabel[]; // for status columns
   description?: string; // optional column description (shown as ⓘ tooltip)
   required?: boolean; // marks the column as required (red * on header)
+  defaultValue?: string; // value applied to this column on new items
   // connection: targetBoardId · mirror: connectionColumnId + sourceColumnId
   targetBoardId?: string;
   connectionColumnId?: string;
