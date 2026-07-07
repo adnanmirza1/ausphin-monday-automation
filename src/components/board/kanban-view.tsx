@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import type { BoardData, ItemData, PersonLite } from "@/lib/board-types";
 import type { StatusLabel } from "@/lib/constants";
 import { setCell } from "@/app/actions/board";
@@ -74,6 +74,9 @@ function Lane({
   delay: number;
 }) {
   const color = label?.color ?? "#9AA4B2";
+  const targetValue = label?.id ?? null;
+  const [over, setOver] = useState(false);
+  const [, start] = useTransition();
   return (
     <div className="flex w-72 flex-none flex-col animate-rise" style={{ animationDelay: `${delay * 40}ms` }}>
       <div className="mb-2 flex items-center gap-2">
@@ -87,8 +90,25 @@ function Lane({
       </div>
 
       <div
-        className="flex flex-col gap-2 rounded-xl p-2"
-        style={{ background: `${color}0f`, minHeight: 80 }}
+        onDragOver={(e) => {
+          if (readOnly) return;
+          e.preventDefault();
+          setOver(true);
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(e) => {
+          if (readOnly) return;
+          e.preventDefault();
+          setOver(false);
+          const id = e.dataTransfer.getData("text/plain");
+          if (id) start(() => void setCell(board.id, id, statusColId, targetValue));
+        }}
+        className="flex flex-col gap-2 rounded-xl p-2 transition"
+        style={{
+          background: `${color}0f`,
+          minHeight: 80,
+          boxShadow: over ? `inset 0 0 0 2px ${color}` : undefined,
+        }}
       >
         {items.map((item) => (
           <Card
@@ -144,7 +164,16 @@ function Card({
     .filter(Boolean);
 
   return (
-    <div className="rounded-lg border border-hair bg-white p-3 shadow-soft transition hover:shadow-pop">
+    <div
+      draggable={!readOnly}
+      onDragStart={(e) => {
+        e.dataTransfer.setData("text/plain", item.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      className={`rounded-lg border border-hair bg-white p-3 shadow-soft transition hover:shadow-pop ${
+        readOnly ? "" : "cursor-grab active:cursor-grabbing"
+      }`}
+    >
       <button
         onClick={() => open({ id: item.id, name: item.name })}
         className="text-left text-sm font-semibold text-ink hover:text-teal"
