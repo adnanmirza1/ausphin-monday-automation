@@ -38,16 +38,38 @@ const COL_W = 168;
 
 type ConnOpts = Record<string, { id: string; name: string }[]>;
 
+export type RowHeight = "compact" | "default" | "tall";
+
+const ROW_PAD: Record<RowHeight, string> = {
+  compact: "py-1",
+  default: "py-2.5",
+  tall: "py-4",
+};
+
+// Tint a row background from a status label colour (6-digit hex) at ~11% alpha.
+function tintFor(board: BoardData, item: ItemData, colorBy: string | null) {
+  if (!colorBy) return undefined;
+  const col = board.columns.find((c) => c.id === colorBy && c.type === "status");
+  if (!col) return undefined;
+  const value = item.cells[colorBy]?.value;
+  const color = col.labels.find((l) => l.id === value)?.color;
+  return color ? `${color}1F` : undefined;
+}
+
 export function TableView({
   board,
   people,
   readOnly,
   connectionOptions = {},
+  rowHeight = "default",
+  colorBy = null,
 }: {
   board: BoardData;
   people: PersonLite[];
   readOnly: boolean;
   connectionOptions?: ConnOpts;
+  rowHeight?: RowHeight;
+  colorBy?: string | null;
 }) {
   return (
     <div className="min-w-max p-4 sm:p-6">
@@ -59,6 +81,8 @@ export function TableView({
           people={people}
           readOnly={readOnly}
           connectionOptions={connectionOptions}
+          rowHeight={rowHeight}
+          colorBy={colorBy}
         />
       ))}
       {!readOnly && <AddGroup boardId={board.id} />}
@@ -72,12 +96,16 @@ function GroupBlock({
   people,
   readOnly,
   connectionOptions,
+  rowHeight,
+  colorBy,
 }: {
   board: BoardData;
   group: GroupData;
   people: PersonLite[];
   readOnly: boolean;
   connectionOptions: ConnOpts;
+  rowHeight: RowHeight;
+  colorBy: string | null;
 }) {
   const [editingName, setEditingName] = useState(false);
   const [name, setName] = useState(group.name);
@@ -218,6 +246,8 @@ function GroupBlock({
             people={people}
             readOnly={readOnly}
             connectionOptions={connectionOptions}
+            rowHeight={rowHeight}
+            colorBy={colorBy}
           />
         ))}
 
@@ -240,6 +270,8 @@ function Row({
   people,
   readOnly,
   connectionOptions,
+  rowHeight,
+  colorBy,
 }: {
   board: BoardData;
   group: GroupData;
@@ -247,11 +279,14 @@ function Row({
   people: PersonLite[];
   readOnly: boolean;
   connectionOptions: ConnOpts;
+  rowHeight: RowHeight;
+  colorBy: string | null;
 }) {
   const [name, setName] = useState(item.name);
   const [over, setOver] = useState(false);
   const [, start] = useTransition();
   const { open } = useBoardUI();
+  const tint = tintFor(board, item, colorBy);
 
   return (
     <div
@@ -270,9 +305,10 @@ function Row({
         if (draggedId && draggedId !== item.id)
           start(() => void reorderItem(board.id, draggedId, group.id, item.id));
       }}
-      className={`group flex items-stretch border-b border-hair last:border-b-0 hover:bg-canvas/50 ${
-        over ? "border-t-2 border-t-teal" : ""
-      }`}
+      style={tint ? { background: tint } : undefined}
+      className={`group flex items-stretch border-b border-hair last:border-b-0 ${
+        tint ? "" : "hover:bg-canvas/50"
+      } ${over ? "border-t-2 border-t-teal" : ""}`}
     >
       <div className="flex items-center" style={{ width: NAME_W }}>
         <span className="h-full w-1.5 flex-none" style={{ background: group.color }} />
@@ -295,7 +331,7 @@ function Row({
           onChange={(e) => setName(e.target.value)}
           onBlur={() => name !== item.name && start(() => void renameItem(board.id, item.id, name))}
           onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-          className="flex-1 bg-transparent px-2.5 py-2.5 text-sm font-medium text-ink outline-none focus:bg-teal/5"
+          className={`flex-1 bg-transparent px-2.5 text-sm font-medium text-ink outline-none focus:bg-teal/5 ${ROW_PAD[rowHeight]}`}
         />
         <button
           onClick={() => open({ id: item.id, name: item.name })}

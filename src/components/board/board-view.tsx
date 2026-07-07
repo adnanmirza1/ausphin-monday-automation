@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import type { BoardData, PersonLite } from "@/lib/board-types";
 import { renameBoard, archiveBoard } from "@/app/actions/board";
-import { TableView } from "./table-view";
+import { TableView, type RowHeight } from "./table-view";
 import { KanbanView } from "./kanban-view";
 import { CalendarView } from "./calendar-view";
 import { AddColumnButton } from "./add-column";
@@ -63,6 +63,9 @@ export function BoardView({
 
   const [colsOpen, setColsOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [rowHeight, setRowHeight] = useState<RowHeight>("default");
+  const [colorBy, setColorBy] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [, start] = useTransition();
 
@@ -266,6 +269,50 @@ export function BoardView({
               </span>
             ))}
 
+            {/* ⋯ more view options: item height + conditional coloring */}
+            <Popover open={moreOpen} setOpen={setMoreOpen} label="⋯">
+              <p className="mb-1.5 text-xs font-semibold text-body">Item height</p>
+              <div className="mb-3 inline-flex rounded-lg border border-hair p-0.5">
+                {(["compact", "default", "tall"] as RowHeight[]).map((h) => (
+                  <button
+                    key={h}
+                    onClick={() => setRowHeight(h)}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize transition ${
+                      rowHeight === h ? "bg-teal/10 text-teal-deep" : "text-muted hover:text-body"
+                    }`}
+                  >
+                    {h}
+                  </button>
+                ))}
+              </div>
+              <p className="mb-1.5 text-xs font-semibold text-body">Conditional coloring</p>
+              {statusCols.length === 0 ? (
+                <p className="text-xs text-muted">Add a status column to colour rows.</p>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <button
+                    onClick={() => setColorBy(null)}
+                    className={`rounded px-2 py-1 text-left text-sm transition ${
+                      colorBy === null ? "bg-teal/10 text-teal-deep" : "text-body hover:bg-canvas"
+                    }`}
+                  >
+                    Off
+                  </button>
+                  {statusCols.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => setColorBy(c.id)}
+                      className={`rounded px-2 py-1 text-left text-sm transition ${
+                        colorBy === c.id ? "bg-teal/10 text-teal-deep" : "text-body hover:bg-canvas"
+                      }`}
+                    >
+                      Colour by “{c.name}”
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Popover>
+
             {/* search */}
             <div className="relative flex-1 sm:max-w-xs">
               <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted">⌕</span>
@@ -292,6 +339,8 @@ export function BoardView({
               people={people}
               readOnly={readOnly}
               connectionOptions={connectionOptions}
+              rowHeight={rowHeight}
+              colorBy={colorBy}
             />
           )}
           {mode === "kanban" && <KanbanView board={view} people={people} readOnly={readOnly} />}
