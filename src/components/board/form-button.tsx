@@ -73,8 +73,14 @@ export function FormButton({
             </label>
 
             <div className="mt-3 grid gap-3">
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Form title" className={inp} />
-              <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description" className={inp} />
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-semibold text-body">Form title</span>
+                <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Candidate intake" className={inp} />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-semibold text-body">Description</span>
+                <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short line shown under the title" className={inp} />
+              </label>
 
               <div>
                 <p className="mb-1.5 text-xs font-semibold text-body">Fields to include</p>
