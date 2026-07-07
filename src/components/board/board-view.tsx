@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import type { BoardData, PersonLite } from "@/lib/board-types";
-import { renameBoard, archiveBoard } from "@/app/actions/board";
+import { renameBoard, archiveBoard, sortItemsByColumn } from "@/app/actions/board";
 import { TableView, type RowHeight } from "./table-view";
 import { KanbanView } from "./kanban-view";
 import { CalendarView } from "./calendar-view";
@@ -22,6 +22,15 @@ type SavedView = {
   isPinned: boolean;
   config: ViewConfig;
 };
+
+type FacetOption = {
+  value: string;
+  label: string;
+  color?: string; // status label / group colour
+  personColor?: string; // person avatar colour
+  count: number;
+};
+type Facet = { key: string; name: string; columnId?: string; options: FacetOption[] };
 
 export function BoardView({
   board,
@@ -63,6 +72,7 @@ export function BoardView({
 
   const [colsOpen, setColsOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [rowHeight, setRowHeight] = useState<RowHeight>("default");
   const [colorBy, setColorBy] = useState<string | null>(null);
@@ -78,23 +88,89 @@ export function BoardView({
   }
 
   const statusCols = board.columns.filter((c) => c.type === "status");
+  const sortableCols = board.columns.filter((c) =>
+    ["status", "text", "longtext", "number", "date", "email", "phone"].includes(c.type)
+  );
 
   // Apply hidden columns + filters + search.
+  // Filters: OR within one column, AND across columns; "__group__" filters
+  // by group. Blank is represented by the empty-string value.
   const view = useMemo(() => {
     const cols = board.columns.filter((c) => !hidden.has(c.id));
     const needle = q.trim().toLowerCase();
-    const groups = board.groups.map((g) => ({
-      ...g,
-      items: g.items.filter((it) => {
-        if (needle && !it.name.toLowerCase().includes(needle)) return false;
-        for (const f of filters) {
-          if ((it.cells[f.columnId]?.value ?? "") !== f.value) return false;
-        }
-        return true;
-      }),
-    }));
+    const byCol = new Map<string, Set<string>>();
+    for (const f of filters) {
+      if (!byCol.has(f.columnId)) byCol.set(f.columnId, new Set());
+      byCol.get(f.columnId)!.add(f.value);
+    }
+    const groupSel = byCol.get("__group__");
+    const groups = board.groups
+      .filter((g) => !groupSel || groupSel.has(g.id))
+      .map((g) => ({
+        ...g,
+        items: g.items.filter((it) => {
+          if (needle && !it.name.toLowerCase().includes(needle)) return false;
+          for (const [colId, vals] of byCol) {
+            if (colId === "__group__") continue;
+            if (!vals.has(it.cells[colId]?.value ?? "")) return false;
+          }
+          return true;
+        }),
+      }));
     return { ...board, columns: cols, groups };
   }, [board, hidden, filters, q]);
+
+  // Facets for the quick-filter panel: one per group + per filterable column,
+  // each with its distinct values and item counts.
+  const facets = useMemo<Facet[]>(() => {
+    const allItems = board.groups.flatMap((g) => g.items);
+    const out: Facet[] = [
+      {
+        key: "__group__",
+        name: "Group",
+        options: board.groups.map((g) => ({
+          value: g.id,
+          label: g.name,
+          color: g.color,
+          count: g.items.length,
+        })),
+      },
+    ];
+    const FILTERABLE = ["status", "person", "text", "longtext", "number", "date", "email", "phone"];
+    for (const c of board.columns) {
+      if (!FILTERABLE.includes(c.type)) continue;
+      const counts = new Map<string, number>();
+      for (const it of allItems) {
+        const v = it.cells[c.id]?.value ?? "";
+        counts.set(v, (counts.get(v) ?? 0) + 1);
+      }
+      let options: FacetOption[] = [];
+      if (c.type === "status") {
+        options = c.labels.map((l) => ({
+          value: l.id,
+          label: l.label,
+          color: l.color,
+          count: counts.get(l.id) ?? 0,
+        }));
+      } else if (c.type === "person") {
+        options = [...counts.keys()]
+          .filter((v) => v !== "")
+          .map((id) => {
+            const p = people.find((pp) => pp.id === id);
+            return { value: id, label: p?.name ?? "Unknown", personColor: p?.avatarColor, count: counts.get(id) ?? 0 };
+          });
+      } else {
+        options = [...counts.keys()]
+          .filter((v) => v !== "")
+          .sort()
+          .map((v) => ({ value: v, label: v, count: counts.get(v) ?? 0 }));
+      }
+      const blank = counts.get("") ?? 0;
+      if (blank > 0) options.push({ value: "", label: "Blank", count: blank });
+      if (options.length) out.push({ key: c.id, name: c.name, options, columnId: c.id });
+    }
+    return out;
+  }, [board, people]);
 
   const total = board.groups.reduce((n, g) => n + g.items.length, 0);
   const shown = view.groups.reduce((n, g) => n + g.items.length, 0);
@@ -105,9 +181,25 @@ export function BoardView({
       JSON.stringify((active?.config.hiddenColumns ?? []).slice().sort()) ||
     JSON.stringify(filters) !== JSON.stringify(active?.config.filters ?? []);
 
-  function labelFor(columnId: string, valueId: string) {
-    const col = board.columns.find((c) => c.id === columnId);
-    return col?.labels.find((l) => l.id === valueId)?.label ?? valueId;
+  function chipLabel(f: { columnId: string; value: string }) {
+    if (f.columnId === "__group__")
+      return board.groups.find((g) => g.id === f.value)?.name ?? "Group";
+    const col = board.columns.find((c) => c.id === f.columnId);
+    if (!col) return f.value;
+    if (f.value === "") return `${col.name}: Blank`;
+    if (col.type === "status")
+      return col.labels.find((l) => l.id === f.value)?.label ?? f.value;
+    if (col.type === "person")
+      return people.find((p) => p.id === f.value)?.name ?? f.value;
+    return f.value;
+  }
+  function toggleFilter(columnId: string, value: string) {
+    setFilters((fs) => {
+      const on = fs.some((f) => f.columnId === columnId && f.value === value);
+      return on
+        ? fs.filter((f) => !(f.columnId === columnId && f.value === value))
+        : [...fs, { columnId, value }];
+    });
   }
 
   return (
@@ -225,49 +317,58 @@ export function BoardView({
               </div>
             </Popover>
 
-            {/* Filter control */}
-            {statusCols.length > 0 && (
-              <Popover open={filterOpen} setOpen={setFilterOpen} label={`Filter${filters.length ? ` · ${filters.length}` : ""}`}>
-                <p className="mb-1.5 text-xs font-semibold text-body">Filter by status</p>
-                {statusCols.map((c) => (
-                  <div key={c.id} className="mb-2">
-                    <p className="text-xs font-medium text-muted">{c.name}</p>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {c.labels.map((l) => {
-                        const on = filters.some((f) => f.columnId === c.id && f.value === l.id);
-                        return (
-                          <button
-                            key={l.id}
-                            onClick={() =>
-                              setFilters((fs) =>
-                                on
-                                  ? fs.filter((f) => !(f.columnId === c.id && f.value === l.id))
-                                  : [...fs.filter((f) => f.columnId !== c.id), { columnId: c.id, value: l.id }]
-                              )
-                            }
-                            className="rounded-full px-2 py-0.5 text-[11px] font-medium text-white"
-                            style={{ background: l.color, opacity: on ? 1 : 0.45 }}
-                          >
-                            {l.label}
-                          </button>
-                        );
-                      })}
+            {/* Filter control — quick filters across every column */}
+            <FilterPanel
+              open={filterOpen}
+              setOpen={setFilterOpen}
+              facets={facets}
+              filters={filters}
+              toggle={toggleFilter}
+              clearAll={() => setFilters([])}
+              shown={shown}
+              total={total}
+            />
+
+            {/* Sort control */}
+            {sortableCols.length > 0 && (
+              <Popover open={sortOpen} setOpen={setSortOpen} label="Sort">
+                <p className="mb-1.5 text-xs font-semibold text-body">Sort items by</p>
+                <div className="flex max-h-64 flex-col gap-1 overflow-y-auto scroll-thin">
+                  {sortableCols.map((c) => (
+                    <div key={c.id} className="flex items-center justify-between gap-2 rounded px-1.5 py-1 hover:bg-canvas">
+                      <span className="truncate text-sm text-body">{c.name}</span>
+                      <span className="flex flex-none gap-1">
+                        <button
+                          onClick={() => { setSortOpen(false); start(() => void sortItemsByColumn(board.id, c.id, "asc")); }}
+                          className="rounded border border-hair px-1.5 py-0.5 text-xs text-muted hover:text-teal"
+                          title="Ascending"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          onClick={() => { setSortOpen(false); start(() => void sortItemsByColumn(board.id, c.id, "desc")); }}
+                          className="rounded border border-hair px-1.5 py-0.5 text-xs text-muted hover:text-teal"
+                          title="Descending"
+                        >
+                          ↓
+                        </button>
+                      </span>
                     </div>
-                  </div>
-                ))}
-                {filters.length > 0 && (
-                  <button onClick={() => setFilters([])} className="mt-1 text-xs text-muted hover:text-danger">
-                    Clear filters
-                  </button>
-                )}
+                  ))}
+                </div>
               </Popover>
             )}
 
-            {/* active filter chips */}
+            {/* active filter chips (click to remove) */}
             {filters.map((f) => (
-              <span key={`${f.columnId}-${f.value}`} className="rounded-full bg-teal/10 px-2 py-0.5 text-xs font-medium text-teal-deep">
-                {labelFor(f.columnId, f.value)}
-              </span>
+              <button
+                key={`${f.columnId}-${f.value}`}
+                onClick={() => toggleFilter(f.columnId, f.value)}
+                className="flex items-center gap-1 rounded-full bg-teal/10 px-2 py-0.5 text-xs font-medium text-teal-deep hover:bg-teal/20"
+                title="Remove filter"
+              >
+                {chipLabel(f)} <span className="text-teal-deep/60">✕</span>
+              </button>
             ))}
 
             {/* ⋯ more view options: item height + conditional coloring */}
@@ -480,6 +581,91 @@ function Popover({
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
           <div className="absolute left-0 z-30 mt-1 w-64 rounded-xl border border-hair bg-white p-3 shadow-pop">
             {children}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function FilterPanel({
+  open,
+  setOpen,
+  facets,
+  filters,
+  toggle,
+  clearAll,
+  shown,
+  total,
+}: {
+  open: boolean;
+  setOpen: (v: boolean) => void;
+  facets: Facet[];
+  filters: { columnId: string; value: string }[];
+  toggle: (columnId: string, value: string) => void;
+  clearAll: () => void;
+  shown: number;
+  total: number;
+}) {
+  const on = (columnId: string, value: string) =>
+    filters.some((f) => f.columnId === columnId && f.value === value);
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className={`rounded-lg border px-3 py-1.5 text-sm hover:bg-canvas ${
+          filters.length ? "border-teal/50 bg-teal/5 text-teal-deep" : "border-hair bg-white text-body"
+        }`}
+      >
+        Filter{filters.length ? ` · ${filters.length}` : ""}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 z-30 mt-1 w-[min(92vw,760px)] rounded-xl border border-hair bg-white p-4 shadow-pop">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm font-bold text-ink">
+                Quick filters{" "}
+                <span className="ml-1 text-xs font-normal text-muted">
+                  Showing {shown} of {total}
+                </span>
+              </p>
+              {filters.length > 0 && (
+                <button onClick={clearAll} className="text-xs text-muted hover:text-danger">
+                  Clear all
+                </button>
+              )}
+            </div>
+            <div className="flex gap-4 overflow-x-auto scroll-thin pb-1">
+              {facets.map((facet) => (
+                <div key={facet.key} className="w-40 flex-none">
+                  <p className="mb-1.5 truncate text-xs font-semibold text-muted">{facet.name}</p>
+                  <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto scroll-thin">
+                    {facet.options.map((opt) => {
+                      const active = on(facet.columnId ?? facet.key, opt.value);
+                      return (
+                        <button
+                          key={opt.value || "__blank__"}
+                          onClick={() => toggle(facet.columnId ?? facet.key, opt.value)}
+                          className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs transition ${
+                            active ? "bg-teal/10 ring-1 ring-teal/40" : "hover:bg-canvas"
+                          }`}
+                        >
+                          {opt.color && (
+                            <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: opt.color }} />
+                          )}
+                          {opt.personColor && (
+                            <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: opt.personColor }} />
+                          )}
+                          <span className="flex-1 truncate text-body">{opt.label}</span>
+                          <span className="flex-none text-[10px] text-muted">{opt.count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </>
       )}
