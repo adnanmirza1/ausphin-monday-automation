@@ -1,11 +1,12 @@
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useRef, useState, useTransition } from "react";
 import { PALETTE, USER_STATUSES, USER_STATUS_META } from "@/lib/constants";
 import {
   setUserRole,
   setUserDepartment,
   setUserStatus,
+  setUserAvatar,
   createUser,
   editUser,
   deleteUser,
@@ -34,6 +35,7 @@ type UserRow = {
   name: string;
   email: string;
   avatarColor: string;
+  avatarUrl: string | null;
   status: string;
   roleId: string | null;
   departmentId: string | null;
@@ -102,6 +104,68 @@ export function AdminPanel({
 
 function initials(name: string) {
   return name.split(" ").map((s) => s[0]).slice(0, 2).join("");
+}
+
+// Clickable avatar with photo upload (stored as a data URL). Falls back to
+// initials on the user's colour when no photo is set.
+function AvatarUpload({ user }: { user: UserRow }) {
+  const [busy, setBusy] = useState(false);
+  const [, start] = useTransition();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 1_400_000) {
+      alert("Please choose an image under ~1.4 MB.");
+      return;
+    }
+    setBusy(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = String(reader.result);
+      start(async () => {
+        await setUserAvatar(user.id, url);
+        setBusy(false);
+      });
+    };
+    reader.onerror = () => setBusy(false);
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <div className="group/av relative flex-none">
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        title="Change profile picture"
+        className="relative grid h-9 w-9 place-items-center overflow-hidden rounded-full text-[11px] font-bold text-white"
+        style={{ background: user.avatarColor }}
+      >
+        {user.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={user.avatarUrl} alt={user.name} className="h-full w-full object-cover" />
+        ) : (
+          initials(user.name)
+        )}
+        <span className="absolute inset-0 hidden place-items-center bg-ink/40 text-[9px] group-hover/av:grid">
+          {busy ? "…" : "✎"}
+        </span>
+      </button>
+      {user.avatarUrl && (
+        <button
+          type="button"
+          onClick={() => start(() => void setUserAvatar(user.id, null))}
+          title="Remove photo"
+          className="absolute -right-1 -top-1 hidden h-4 w-4 place-items-center rounded-full bg-white text-[9px] text-danger shadow group-hover/av:grid"
+        >
+          ✕
+        </button>
+      )}
+      <input ref={inputRef} type="file" accept="image/*" onChange={onPick} className="hidden" />
+    </div>
+  );
 }
 
 /* ── Users ─────────────────────────────────────────── */
@@ -201,12 +265,7 @@ function UserRow({
     <tr className="border-b border-hair last:border-0">
       <td className="px-4 py-2.5">
         <div className="flex items-center gap-2.5">
-          <span
-            className="grid h-8 w-8 flex-none place-items-center rounded-full text-[11px] font-bold text-white"
-            style={{ background: u.avatarColor }}
-          >
-            {initials(u.name)}
-          </span>
+          <AvatarUpload user={u} />
           {editing ? (
             <div className="flex flex-col gap-1">
               <input value={name} onChange={(e) => setName(e.target.value)} className={selCls} placeholder="Name" />

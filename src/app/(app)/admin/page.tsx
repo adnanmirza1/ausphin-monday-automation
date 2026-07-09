@@ -34,6 +34,7 @@ export default async function AdminPage() {
         name: u.name,
         email: u.email,
         avatarColor: u.avatarColor,
+        avatarUrl: u.avatarUrl,
         status: u.status,
         roleId: u.roleId,
         departmentId: u.departmentId,

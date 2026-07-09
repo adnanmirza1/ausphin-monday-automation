@@ -24,6 +24,7 @@ export type SidebarUser = {
   name: string;
   email: string;
   avatarColor: string;
+  avatarUrl?: string | null;
   role: string;
   canManageUsers: boolean;
   canManageBoards: boolean;
@@ -186,10 +187,15 @@ export function Sidebar({
 
         <div className="mt-1 flex items-center gap-2 rounded-md px-2 py-2">
           <span
-            className="grid h-8 w-8 flex-none place-items-center rounded-full text-xs font-bold text-white"
+            className="grid h-8 w-8 flex-none place-items-center overflow-hidden rounded-full text-xs font-bold text-white"
             style={{ background: user.avatarColor }}
           >
-            {initials}
+            {user.avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={user.avatarUrl} alt={user.name} className="h-full w-full object-cover" />
+            ) : (
+              initials
+            )}
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-white">{user.name}</p>

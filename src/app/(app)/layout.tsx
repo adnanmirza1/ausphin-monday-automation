@@ -26,6 +26,7 @@ export default async function AppLayout({
         name: user.name,
         email: user.email,
         avatarColor: user.avatarColor,
+        avatarUrl: user.avatarUrl,
         role: user.role?.name ?? "—",
         canManageUsers: !!(p.canManageUsers || p.canManageEnvironments),
         canManageBoards: !!(p.canManageBoards || p.canEditItems),

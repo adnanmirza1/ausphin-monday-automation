@@ -30,6 +30,14 @@ export async function setUserStatus(userId: string, status: string) {
   touch();
 }
 
+// Set (or clear with null) a user's profile picture. `dataUrl` is a data: URL.
+export async function setUserAvatar(userId: string, dataUrl: string | null) {
+  await requireAdmin();
+  if (dataUrl && dataUrl.length > 1_500_000) return; // ~1.5MB cap
+  await db.user.update({ where: { id: userId }, data: { avatarUrl: dataUrl } });
+  touch();
+}
+
 // Edit a user's name / email. Returns an error string or null.
 export async function editUser(
   userId: string,

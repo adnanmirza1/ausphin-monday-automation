@@ -66,6 +66,7 @@ model User {
   name         String
   passwordHash String? // null for pure Google sign-in
   avatarColor  String   @default("#0B7A6F")
+  avatarUrl    String? // uploaded profile picture (data URL) — falls back to initials
   status       String   @default("active")
   roleId       String?
   departmentId String?
