@@ -34,6 +34,7 @@ import {
   sortItemsByColumn,
   bulkDeleteItems,
   bulkMoveItems,
+  setColumnPermission,
 } from "@/app/actions/board";
 
 // ── Bulk selection (shared across all groups of the board) ──
@@ -513,7 +514,7 @@ function Row({
             column={c}
             cell={item.cells[c.id]}
             people={people}
-            readOnly={readOnly}
+            readOnly={readOnly || c.editable === false}
             options={connectionOptions[c.id]}
           />
         </div>
@@ -632,6 +633,9 @@ function ColumnHeader({
         <span className="font-mono text-[10px] text-muted/60">{COLUMN_TYPE_META[column.type]?.icon}</span>
         <span className="truncate">{column.name}</span>
         {column.required && <span className="text-danger" title="Required">*</span>}
+        {column.editPolicy && column.editPolicy !== "all" && (
+          <span className="text-muted/70" title="Editing restricted">🔒</span>
+        )}
         {column.description && <span className="text-muted/60" title={column.description}>ⓘ</span>}
       </button>
       {!readOnly && (
@@ -703,6 +707,25 @@ function ColumnHeader({
                   </button>
                   <button onClick={() => act(() => setDefaultOpen(true))} className={menuItem}>
                     ◆ Default value{column.defaultValue ? " ✓" : ""}
+                  </button>
+
+                  <Divider />
+                  <p className="px-2 pb-0.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">
+                    Who can edit
+                  </p>
+                  <button
+                    onClick={() => act(() => start(() => void setColumnPermission(boardId, column.id, "all")))}
+                    className={`${menuItem} flex items-center justify-between`}
+                  >
+                    <span>🔓 Anyone</span>
+                    {(!column.editPolicy || column.editPolicy === "all") && <span className="text-teal">✓</span>}
+                  </button>
+                  <button
+                    onClick={() => act(() => start(() => void setColumnPermission(boardId, column.id, "admins")))}
+                    className={`${menuItem} flex items-center justify-between`}
+                  >
+                    <span>🔒 Admins only</span>
+                    {column.editPolicy === "admins" && <span className="text-teal">✓</span>}
                   </button>
 
                   <Divider />

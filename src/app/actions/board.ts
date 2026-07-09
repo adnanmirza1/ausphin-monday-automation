@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireEditor } from "@/lib/guard";
+import { requireEditor, canEditColumn } from "@/lib/guard";
 import {
   DEFAULT_STATUS_LABELS,
   PALETTE,
@@ -157,14 +157,16 @@ export async function setCell(
   columnId: string,
   value: string | null
 ) {
-  await requireEditor();
+  const user = await requireEditor();
+  const column = await db.column.findUnique({ where: { id: columnId } });
+  if (column && !canEditColumn(user, column.config))
+    throw new Error("You don't have permission to edit this column.");
   await db.cell.upsert({
     where: { itemId_columnId: { itemId, columnId } },
     create: { itemId, columnId, value },
     update: { value },
   });
   // Fire status-change automations when a status column changes.
-  const column = await db.column.findUnique({ where: { id: columnId } });
   if (column?.type === "status") {
     await runAutomations({ type: "status_changes", boardId, itemId, columnId, value });
   }
@@ -177,12 +179,26 @@ export async function setPersonCell(
   columnId: string,
   personId: string | null
 ) {
-  await requireEditor();
+  const user = await requireEditor();
+  const column = await db.column.findUnique({ where: { id: columnId } });
+  if (column && !canEditColumn(user, column.config))
+    throw new Error("You don't have permission to edit this column.");
   await db.cell.upsert({
     where: { itemId_columnId: { itemId, columnId } },
     create: { itemId, columnId, personId, value: personId },
     update: { personId, value: personId },
   });
+  touch(boardId);
+}
+
+// Set who may edit a column's cells: "all" | "admins" | roleIds[].
+export async function setColumnPermission(
+  boardId: string,
+  columnId: string,
+  edit: "all" | "admins" | string[]
+) {
+  await requireEditor();
+  await patchColumnConfig(columnId, { edit: edit === "all" ? undefined : edit });
   touch(boardId);
 }
 

@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { allowedBoardIds } from "@/lib/guard";
+import { allowedBoardIds, canEditColumn } from "@/lib/guard";
 import { db } from "@/lib/db";
 import { getBoard, getOrgPeople } from "@/lib/queries";
 import type { BoardData, ColumnData } from "@/lib/board-types";
@@ -76,6 +76,8 @@ export default async function BoardPage({
       targetBoardId: (cfg.targetBoardId as string) ?? undefined,
       connectionColumnId: (cfg.connectionColumnId as string) ?? undefined,
       sourceColumnId: (cfg.sourceColumnId as string) ?? undefined,
+      editable: canEditColumn(user, c.config),
+      editPolicy: (cfg.edit as "all" | "admins" | string[]) ?? "all",
     };
   });
   const colById = new Map(board.columns.map((c) => [c.id, c]));

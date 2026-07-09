@@ -17,6 +17,23 @@ export function allowedBoardIds(user: CurrentUser): string[] | null {
   return p.boards;
 }
 
+// Can this user edit cell values in a column with the given JSON config?
+// config.edit: "all" (default) | "admins" | roleIds[]. Admins always may.
+export function canEditColumn(user: CurrentUser, config: string): boolean {
+  const p = permsOf(user);
+  const isAdmin = !!(p.canManageUsers || p.canManageEnvironments || p.canManageBoards);
+  let edit: unknown;
+  try {
+    edit = JSON.parse(config)?.edit;
+  } catch {
+    return true;
+  }
+  if (edit === undefined || edit === null || edit === "all") return true;
+  if (edit === "admins") return isAdmin;
+  if (Array.isArray(edit)) return isAdmin || (user.roleId != null && edit.includes(user.roleId));
+  return true;
+}
+
 // Throws if not signed in.
 export async function requireUser(): Promise<CurrentUser> {
   const user = await getCurrentUser();

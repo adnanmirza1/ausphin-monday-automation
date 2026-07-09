@@ -15,6 +15,8 @@ export type ColumnData = {
   description?: string; // optional column description (shown as ⓘ tooltip)
   required?: boolean; // marks the column as required (red * on header)
   defaultValue?: string; // value applied to this column on new items
+  editable?: boolean; // false → current user may not edit this column's cells
+  editPolicy?: "all" | "admins" | string[]; // who may edit (roleIds list)
   // connection: targetBoardId · mirror: connectionColumnId + sourceColumnId
   targetBoardId?: string;
   connectionColumnId?: string;
