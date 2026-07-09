@@ -221,7 +221,7 @@ export function BoardView({
             </div>
             <div className="flex items-center gap-2">
               {!readOnly && <DocsButton boardId={board.id} templates={templates} columns={board.columns} />}
-              {!readOnly && <FormButton boardId={board.id} form={board.form} columns={board.columns} />}
+              {!readOnly && <FormButton boardId={board.id} form={board.form} columns={board.columns} groups={board.groups.map((g) => ({ id: g.id, name: g.name }))} />}
               {!readOnly && (
                 <Link href={`/boards/${board.id}/automations`} className={pillBtn}>⚡ Automate</Link>
               )}

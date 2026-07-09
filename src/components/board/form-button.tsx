@@ -10,10 +10,12 @@ export function FormButton({
   boardId,
   form,
   columns,
+  groups = [],
 }: {
   boardId: string;
   form: FormConfig;
   columns: ColumnData[];
+  groups?: { id: string; name: string }[];
 }) {
   const [open, setOpen] = useState(false);
   const [enabled, setEnabled] = useState(form.enabled);
@@ -21,6 +23,8 @@ export function FormButton({
   const [desc, setDesc] = useState(form.desc);
   const [cols, setCols] = useState<string[]>(form.columns);
   const [dedupe, setDedupe] = useState<string | null>(form.dedupeColumnId);
+  const [groupId, setGroupId] = useState<string | null>(form.groupId ?? null);
+  const [welcome, setWelcome] = useState(form.welcomeMessage ?? "");
   const [copied, setCopied] = useState(false);
   const [, start] = useTransition();
 
@@ -39,6 +43,8 @@ export function FormButton({
         desc,
         columns: cols,
         dedupeColumnId: dedupe && cols.includes(dedupe) ? dedupe : null,
+        groupId: groupId && groups.some((g) => g.id === groupId) ? groupId : null,
+        welcomeMessage: welcome,
       })
     );
     setOpen(false);
@@ -166,6 +172,33 @@ export function FormButton({
                 <span className="text-[11px] text-muted">
                   Repeat submissions with the same value update the existing row instead of adding a duplicate.
                 </span>
+              </label>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-semibold text-body">Send submissions to group</span>
+                <select
+                  value={groupId ?? ""}
+                  onChange={(e) => setGroupId(e.target.value || null)}
+                  className={inp}
+                >
+                  <option value="">First group (default)</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
+                  ))}
+                </select>
+                <span className="text-[11px] text-muted">
+                  New submissions land in this group (e.g. “New Leads”).
+                </span>
+              </label>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-semibold text-body">Welcome message (after submit)</span>
+                <input
+                  value={welcome}
+                  onChange={(e) => setWelcome(e.target.value)}
+                  placeholder="Thanks! Your submission was received."
+                  className={inp}
+                />
               </label>
 
               {enabled && link && (

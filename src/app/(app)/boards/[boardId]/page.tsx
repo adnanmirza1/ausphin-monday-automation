@@ -143,7 +143,12 @@ export default async function BoardPage({
   const boardColumnsMap: Record<string, { id: string; name: string; type: string }[]> =
     Object.fromEntries(orgBoards.map((b) => [b.id, b.columns]));
 
-  let formCfg: { columns?: string[]; dedupeColumnId?: string | null } = {};
+  let formCfg: {
+    columns?: string[];
+    dedupeColumnId?: string | null;
+    groupId?: string | null;
+    welcomeMessage?: string;
+  } = {};
   try {
     formCfg = JSON.parse(board.formConfig);
   } catch {}
@@ -159,6 +164,8 @@ export default async function BoardPage({
       desc: board.formDesc,
       columns: formCfg.columns ?? [],
       dedupeColumnId: formCfg.dedupeColumnId ?? null,
+      groupId: formCfg.groupId ?? null,
+      welcomeMessage: formCfg.welcomeMessage ?? "",
     },
     columns,
     groups: board.groups.map((g) => ({

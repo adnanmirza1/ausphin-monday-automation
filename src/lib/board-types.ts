@@ -47,6 +47,8 @@ export type FormConfig = {
   desc: string;
   columns: string[]; // included columnIds
   dedupeColumnId: string | null;
+  groupId: string | null; // destination group for new submissions
+  welcomeMessage: string; // shown after submit
 };
 
 export type BoardData = {

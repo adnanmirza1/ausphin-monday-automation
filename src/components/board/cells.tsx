@@ -35,9 +35,11 @@ export function Cell(props: Ctx) {
     case "number":
       return <InputCell {...props} inputType="number" />;
     case "email":
-      return <InputCell {...props} inputType="email" />;
+      return <EmailCell {...props} />;
     case "phone":
-      return <InputCell {...props} inputType="tel" />;
+      return <PhoneCell {...props} />;
+    case "url":
+      return <UrlCell {...props} />;
     default:
       return <InputCell {...props} inputType="text" />;
   }
@@ -326,6 +328,186 @@ function InputCell({
       onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
       className="h-full w-full bg-transparent px-2 text-center text-xs text-body outline-none focus:bg-teal/5"
     />
+  );
+}
+
+/* ── Email (click → compose in Gmail) ────────────────── */
+function EmailCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(cell?.value ?? "");
+  const [, start] = useTransition();
+  useEffect(() => setValue(cell?.value ?? ""), [cell?.value]);
+
+  function commit() {
+    setEditing(false);
+    if ((cell?.value ?? "") !== value)
+      start(() => void setCell(boardId, itemId, column.id, value || null));
+  }
+
+  const email = cell?.value;
+  if (editing || !email) {
+    return (
+      <input
+        type="email"
+        autoFocus={editing}
+        value={value}
+        disabled={readOnly}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        placeholder={readOnly ? "" : "email…"}
+        className="h-full w-full bg-transparent px-2 text-center text-xs text-body outline-none focus:bg-teal/5"
+      />
+    );
+  }
+  const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}`;
+  return (
+    <div className="flex h-full w-full items-center justify-center gap-1 px-1.5">
+      <a
+        href={gmail}
+        target="_blank"
+        rel="noreferrer"
+        title={`Compose email to ${email} in Gmail`}
+        className="truncate text-xs text-teal hover:underline"
+      >
+        {email}
+      </a>
+      {!readOnly && (
+        <button
+          onClick={() => setEditing(true)}
+          title="Edit email"
+          className="flex-none text-[10px] text-muted hover:text-body"
+        >
+          ✎
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ── Phone (shows country flag by dialing code) ──────── */
+// Longest dial codes first so "+971" matches before "+9".
+const DIAL_FLAGS: [string, string][] = [
+  ["+880", "🇧🇩"], ["+971", "🇦🇪"], ["+974", "🇶🇦"], ["+968", "🇴🇲"], ["+973", "🇧🇭"],
+  ["+965", "🇰🇼"], ["+966", "🇸🇦"], ["+234", "🇳🇬"], ["+254", "🇰🇪"], ["+63", "🇵🇭"],
+  ["+61", "🇦🇺"], ["+64", "🇳🇿"], ["+65", "🇸🇬"], ["+60", "🇲🇾"], ["+62", "🇮🇩"],
+  ["+66", "🇹🇭"], ["+84", "🇻🇳"], ["+91", "🇮🇳"], ["+92", "🇵🇰"], ["+86", "🇨🇳"],
+  ["+81", "🇯🇵"], ["+82", "🇰🇷"], ["+44", "🇬🇧"], ["+49", "🇩🇪"], ["+33", "🇫🇷"],
+  ["+39", "🇮🇹"], ["+34", "🇪🇸"], ["+90", "🇹🇷"], ["+55", "🇧🇷"], ["+52", "🇲🇽"],
+  ["+27", "🇿🇦"], ["+20", "🇪🇬"], ["+7", "🇷🇺"], ["+1", "🇺🇸"],
+];
+function flagForPhone(raw: string): string {
+  const p = raw.replace(/[^\d+]/g, "");
+  if (!p.startsWith("+")) return "🌐";
+  for (const [code, flag] of DIAL_FLAGS) if (p.startsWith(code)) return flag;
+  return "🌐";
+}
+
+function PhoneCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(cell?.value ?? "");
+  const [, start] = useTransition();
+  useEffect(() => setValue(cell?.value ?? ""), [cell?.value]);
+
+  function commit() {
+    setEditing(false);
+    if ((cell?.value ?? "") !== value)
+      start(() => void setCell(boardId, itemId, column.id, value || null));
+  }
+
+  const phone = cell?.value;
+  if (editing || !phone) {
+    return (
+      <input
+        type="tel"
+        autoFocus={editing}
+        value={value}
+        disabled={readOnly}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        placeholder={readOnly ? "" : "+61…"}
+        className="h-full w-full bg-transparent px-2 text-center text-xs text-body outline-none focus:bg-teal/5"
+      />
+    );
+  }
+  return (
+    <div className="flex h-full w-full items-center justify-center gap-1.5 px-1.5">
+      <span className="flex-none text-sm leading-none" title="Detected from dial code">
+        {flagForPhone(phone)}
+      </span>
+      <a
+        href={`tel:${phone.replace(/[^\d+]/g, "")}`}
+        title={`Call ${phone}`}
+        className="truncate text-xs text-body hover:text-teal"
+      >
+        {phone}
+      </a>
+      {!readOnly && (
+        <button
+          onClick={() => setEditing(true)}
+          title="Edit phone"
+          className="flex-none text-[10px] text-muted hover:text-body"
+        >
+          ✎
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ── URL / Link (click to open) ──────────────────────── */
+function UrlCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(cell?.value ?? "");
+  const [, start] = useTransition();
+  useEffect(() => setValue(cell?.value ?? ""), [cell?.value]);
+
+  function commit() {
+    setEditing(false);
+    if ((cell?.value ?? "") !== value)
+      start(() => void setCell(boardId, itemId, column.id, value || null));
+  }
+
+  const url = cell?.value;
+  if (editing || !url) {
+    return (
+      <input
+        type="url"
+        autoFocus={editing}
+        value={value}
+        disabled={readOnly}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        placeholder={readOnly ? "" : "https://…"}
+        className="h-full w-full bg-transparent px-2 text-center text-xs text-body outline-none focus:bg-teal/5"
+      />
+    );
+  }
+  const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  const label = url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+  return (
+    <div className="flex h-full w-full items-center justify-center gap-1 px-1.5">
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        title={url}
+        className="truncate text-xs text-teal hover:underline"
+      >
+        🔗 {label}
+      </a>
+      {!readOnly && (
+        <button
+          onClick={() => setEditing(true)}
+          title="Edit link"
+          className="flex-none text-[10px] text-muted hover:text-body"
+        >
+          ✎
+        </button>
+      )}
+    </div>
   );
 }
 

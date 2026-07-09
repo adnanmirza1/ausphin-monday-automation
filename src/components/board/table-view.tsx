@@ -360,7 +360,10 @@ function Row({
         </button>
         {!readOnly && (
           <button
-            onClick={() => start(() => void deleteItem(board.id, item.id))}
+            onClick={() => {
+              if (confirm(`Delete "${item.name}"? This can't be undone.`))
+                start(() => void deleteItem(board.id, item.id));
+            }}
             className="mr-1.5 hidden h-6 w-6 flex-none place-items-center rounded-md text-muted hover:bg-danger/10 hover:text-danger group-hover:grid"
             title="Delete item"
           >

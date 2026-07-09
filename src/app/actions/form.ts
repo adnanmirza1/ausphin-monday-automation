@@ -14,6 +14,8 @@ export async function saveFormConfig(
     desc: string;
     columns: string[];
     dedupeColumnId: string | null;
+    groupId?: string | null;
+    welcomeMessage?: string;
   }
 ) {
   await requireEditor();
@@ -26,6 +28,8 @@ export async function saveFormConfig(
       formConfig: JSON.stringify({
         columns: cfg.columns,
         dedupeColumnId: cfg.dedupeColumnId,
+        groupId: cfg.groupId ?? null,
+        welcomeMessage: cfg.welcomeMessage ?? "",
       }),
     },
   });
@@ -45,12 +49,17 @@ export async function submitForm(
     where: { id: boardId },
     include: {
       columns: true,
-      groups: { orderBy: { position: "asc" }, take: 1 },
+      groups: { orderBy: { position: "asc" } },
     },
   });
   if (!board || !board.formEnabled) return { ok: false, error: "This form is not available." };
 
-  let cfg: { columns?: string[]; dedupeColumnId?: string | null } = {};
+  let cfg: {
+    columns?: string[];
+    dedupeColumnId?: string | null;
+    groupId?: string | null;
+    welcomeMessage?: string;
+  } = {};
   try {
     cfg = JSON.parse(board.formConfig);
   } catch {}
@@ -98,8 +107,9 @@ export async function submitForm(
     finalItemId = existingItemId;
     message = "Thanks! Your details were updated.";
   } else {
-    // Create a new item in the first group.
-    const group = board.groups[0];
+    // Create a new item in the chosen destination group (else the first group).
+    const group =
+      board.groups.find((g) => g.id === cfg.groupId) ?? board.groups[0];
     if (!group) return { ok: false, error: "This board has no group to receive submissions." };
     const count = await db.item.count({ where: { groupId: group.id } });
     const item = await db.item.create({
@@ -111,7 +121,7 @@ export async function submitForm(
     }
     await runAutomations({ type: "item_created", boardId, itemId: item.id });
     finalItemId = item.id;
-    message = "Thanks! Your submission was received.";
+    message = cfg.welcomeMessage?.trim() || "Thanks! Your submission was received.";
   }
 
   // Cross-board connect (Part 10): link this submission to a matching item on
