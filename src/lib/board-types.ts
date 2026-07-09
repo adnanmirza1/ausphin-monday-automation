@@ -54,6 +54,18 @@ export type FormConfig = {
   slug: string | null; // short public link code (/f/<slug>)
 };
 
+export type FormLite = {
+  id: string;
+  title: string;
+  desc: string;
+  enabled: boolean;
+  slug: string | null;
+  columns: string[];
+  dedupeColumnId: string | null;
+  groupId: string | null;
+  welcomeMessage: string;
+};
+
 export type BoardData = {
   id: string;
   name: string;
@@ -62,4 +74,5 @@ export type BoardData = {
   columns: ColumnData[];
   groups: GroupData[];
   form: FormConfig;
+  forms: FormLite[];
 };

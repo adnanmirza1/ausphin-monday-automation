@@ -45,6 +45,7 @@ export async function getBoard(boardId: string) {
     where: { id: boardId },
     include: {
       environment: true,
+      forms: { orderBy: { position: "asc" } },
       columns: { orderBy: { position: "asc" } },
       groups: {
         orderBy: { position: "asc" },

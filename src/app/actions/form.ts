@@ -56,32 +56,76 @@ export async function saveFormConfig(
   revalidatePath(`/form/${boardId}`);
 }
 
+// ── Multiple forms per board (create / edit / delete) ────────
+type FormCfg = {
+  columns?: string[];
+  dedupeColumnId?: string | null;
+  groupId?: string | null;
+  welcomeMessage?: string;
+};
+
+async function freshSlug(): Promise<string | undefined> {
+  for (let i = 0; i < 6; i++) {
+    const c = Math.random().toString(36).slice(2, 8);
+    const [b, f] = await Promise.all([
+      db.board.findUnique({ where: { formSlug: c }, select: { id: true } }),
+      db.form.findUnique({ where: { slug: c }, select: { id: true } }),
+    ]);
+    if (!b && !f) return c;
+  }
+  return undefined;
+}
+
+export async function createForm(boardId: string, title: string) {
+  await requireEditor();
+  const count = await db.form.count({ where: { boardId } });
+  const slug = await freshSlug();
+  const form = await db.form.create({
+    data: { boardId, title: title.trim() || "New form", position: count, slug, config: "{}" },
+  });
+  revalidatePath(`/boards/${boardId}`);
+  return form.id;
+}
+
+export async function updateForm(
+  formId: string,
+  data: { title: string; desc: string; enabled: boolean; config: FormCfg }
+) {
+  await requireEditor();
+  const form = await db.form.findUnique({ where: { id: formId }, select: { boardId: true, slug: true } });
+  if (!form) return;
+  const slug = form.slug ?? (await freshSlug());
+  await db.form.update({
+    where: { id: formId },
+    data: {
+      title: data.title,
+      desc: data.desc,
+      enabled: data.enabled,
+      ...(slug ? { slug } : {}),
+      config: JSON.stringify(data.config),
+    },
+  });
+  revalidatePath(`/boards/${form.boardId}`);
+}
+
+export async function deleteForm(formId: string) {
+  await requireEditor();
+  const form = await db.form.findUnique({ where: { id: formId }, select: { boardId: true } });
+  if (!form) return;
+  await db.form.delete({ where: { id: formId } });
+  revalidatePath(`/boards/${form.boardId}`);
+}
+
 // ── Public submission (no auth) with de-dup by a chosen column ─
 export type SubmitState = { ok: boolean; error?: string; message?: string };
 
-export async function submitForm(
-  boardId: string,
-  _prev: SubmitState | null,
-  formData: FormData
-): Promise<SubmitState> {
+// Shared submission core used by both the legacy board form and named forms.
+async function runSubmission(boardId: string, cfg: FormCfg, formData: FormData): Promise<SubmitState> {
   const board = await db.board.findUnique({
     where: { id: boardId },
-    include: {
-      columns: true,
-      groups: { orderBy: { position: "asc" } },
-    },
+    include: { columns: true, groups: { orderBy: { position: "asc" } } },
   });
-  if (!board || !board.formEnabled) return { ok: false, error: "This form is not available." };
-
-  let cfg: {
-    columns?: string[];
-    dedupeColumnId?: string | null;
-    groupId?: string | null;
-    welcomeMessage?: string;
-  } = {};
-  try {
-    cfg = JSON.parse(board.formConfig);
-  } catch {}
+  if (!board) return { ok: false, error: "This form is not available." };
   const includedIds = cfg.columns ?? [];
   const includedCols = board.columns.filter((c) => includedIds.includes(c.id));
 
@@ -179,4 +223,37 @@ export async function submitForm(
 
   revalidatePath(`/boards/${boardId}`);
   return { ok: true, message };
+}
+
+// Legacy single board form (board.formConfig).
+export async function submitForm(
+  boardId: string,
+  _prev: SubmitState | null,
+  formData: FormData
+): Promise<SubmitState> {
+  const board = await db.board.findUnique({
+    where: { id: boardId },
+    select: { formEnabled: true, formConfig: true },
+  });
+  if (!board || !board.formEnabled) return { ok: false, error: "This form is not available." };
+  let cfg: FormCfg = {};
+  try {
+    cfg = JSON.parse(board.formConfig);
+  } catch {}
+  return runSubmission(boardId, cfg, formData);
+}
+
+// A named form (Form row) — resolved by its id.
+export async function submitFormById(
+  formId: string,
+  _prev: SubmitState | null,
+  formData: FormData
+): Promise<SubmitState> {
+  const form = await db.form.findUnique({ where: { id: formId } });
+  if (!form || !form.enabled) return { ok: false, error: "This form is not available." };
+  let cfg: FormCfg = {};
+  try {
+    cfg = JSON.parse(form.config);
+  } catch {}
+  return runSubmission(form.boardId, cfg, formData);
 }

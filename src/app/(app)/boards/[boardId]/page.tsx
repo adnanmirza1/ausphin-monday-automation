@@ -170,6 +170,28 @@ export default async function BoardPage({
       welcomeMessage: formCfg.welcomeMessage ?? "",
       slug: board.formSlug ?? null,
     },
+    forms: board.forms.map((f) => {
+      let fc: {
+        columns?: string[];
+        dedupeColumnId?: string | null;
+        groupId?: string | null;
+        welcomeMessage?: string;
+      } = {};
+      try {
+        fc = JSON.parse(f.config);
+      } catch {}
+      return {
+        id: f.id,
+        title: f.title,
+        desc: f.desc,
+        enabled: f.enabled,
+        slug: f.slug,
+        columns: fc.columns ?? [],
+        dedupeColumnId: fc.dedupeColumnId ?? null,
+        groupId: fc.groupId ?? null,
+        welcomeMessage: fc.welcomeMessage ?? "",
+      };
+    }),
     columns,
     groups: board.groups.map((g) => ({
       id: g.id,

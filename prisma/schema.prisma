@@ -146,6 +146,25 @@ model Board {
   views         BoardView[]
   docTemplates  DocTemplate[]
   reminderRules ReminderRule[]
+  forms         Form[]
+}
+
+// A public intake form on a board. A board may have many (no limit); each has
+// its own destination group, welcome message and short /f/<slug> link.
+model Form {
+  id        String   @id @default(cuid())
+  boardId   String
+  title     String   @default("")
+  desc      String   @default("")
+  enabled   Boolean  @default(true)
+  config    String   @default("{}") // JSON: { columns, dedupeColumnId, groupId, welcomeMessage }
+  slug      String?  @unique
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@index([boardId])
 }
 
 model Group {

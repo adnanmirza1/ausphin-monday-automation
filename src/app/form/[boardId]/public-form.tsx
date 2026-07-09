@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import type { StatusLabel } from "@/lib/constants";
-import { submitForm, type SubmitState } from "@/app/actions/form";
+import { submitForm, submitFormById, type SubmitState } from "@/app/actions/form";
 
 export type FormField = {
   id: string;
@@ -22,16 +22,18 @@ const HTML_TYPE: Record<string, string> = {
 
 export function PublicForm({
   boardId,
+  formId,
   title,
   desc,
   fields,
 }: {
   boardId: string;
+  formId?: string;
   title: string;
   desc: string;
   fields: FormField[];
 }) {
-  const action = submitForm.bind(null, boardId);
+  const action = formId ? submitFormById.bind(null, formId) : submitForm.bind(null, boardId);
   const [state, formAction, pending] = useActionState<SubmitState | null, FormData>(
     action,
     null
