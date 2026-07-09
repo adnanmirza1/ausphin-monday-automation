@@ -34,6 +34,69 @@ type FacetOption = {
 };
 type Facet = { key: string; name: string; columnId?: string; options: FacetOption[] };
 
+// ── Advanced filter conditions (operators + date ranges) ──────
+type Cond = { id: string; columnId: string; op: string; v1?: string; v2?: string };
+
+const TEXT_OPS = [
+  ["contains", "contains"], ["is", "is"], ["is_not", "is not"],
+  ["empty", "is empty"], ["not_empty", "is not empty"],
+];
+const STATUS_OPS = [["is", "is"], ["is_not", "is not"], ["empty", "is empty"], ["not_empty", "is not empty"]];
+const DATE_OPS = [
+  ["today", "is today"], ["this_week", "this week"], ["last_week", "last week"], ["next_week", "next week"],
+  ["this_month", "this month"], ["last_month", "last month"], ["next_month", "next month"], ["this_year", "this year"],
+  ["between", "is between"], ["empty", "is empty"], ["not_empty", "is not empty"],
+];
+function opsForType(type: string): [string, string][] {
+  if (type === "date") return DATE_OPS as [string, string][];
+  if (type === "status") return STATUS_OPS as [string, string][];
+  return TEXT_OPS as [string, string][];
+}
+
+function dateInPreset(v: string, preset: string): boolean {
+  const d = new Date(v + "T00:00:00");
+  if (isNaN(+d)) return false;
+  const now = new Date();
+  const sod = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const day = 86400000;
+  const t = sod(now);
+  const dd = sod(d);
+  const dow = (now.getDay() + 6) % 7; // Monday = 0
+  const weekStart = t - dow * day;
+  switch (preset) {
+    case "today": return dd === t;
+    case "this_week": return dd >= weekStart && dd < weekStart + 7 * day;
+    case "last_week": return dd >= weekStart - 7 * day && dd < weekStart;
+    case "next_week": return dd >= weekStart + 7 * day && dd < weekStart + 14 * day;
+    case "this_month": return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    case "last_month": {
+      const m = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      return d.getFullYear() === m.getFullYear() && d.getMonth() === m.getMonth();
+    }
+    case "next_month": {
+      const m = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      return d.getFullYear() === m.getFullYear() && d.getMonth() === m.getMonth();
+    }
+    case "this_year": return d.getFullYear() === now.getFullYear();
+    default: return true;
+  }
+}
+function matchCond(cellVal: string, cond: Cond): boolean {
+  const v = (cellVal ?? "").trim();
+  switch (cond.op) {
+    case "empty": return v === "";
+    case "not_empty": return v !== "";
+    case "is": return v === (cond.v1 ?? "");
+    case "is_not": return v !== (cond.v1 ?? "");
+    case "contains": return v.toLowerCase().includes((cond.v1 ?? "").toLowerCase());
+    case "between": return !cond.v1 || !cond.v2 ? true : v >= cond.v1 && v <= cond.v2;
+    case "today": case "this_week": case "last_week": case "next_week":
+    case "this_month": case "last_month": case "next_month": case "this_year":
+      return dateInPreset(v, cond.op);
+    default: return true;
+  }
+}
+
 export function BoardView({
   board,
   people,
@@ -73,6 +136,8 @@ export function BoardView({
   );
 
   const [colsOpen, setColsOpen] = useState(false);
+  const [adv, setAdv] = useState<Cond[]>([]);
+  const [advOpen, setAdvOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -93,6 +158,22 @@ export function BoardView({
   const sortableCols = board.columns.filter((c) =>
     ["status", "text", "longtext", "number", "date", "email", "phone"].includes(c.type)
   );
+  const advCols = board.columns.filter((c) =>
+    ["status", "text", "longtext", "number", "date", "email", "phone", "url"].includes(c.type)
+  );
+  const addCond = () =>
+    setAdv((a) => {
+      const col = advCols[0];
+      if (!col) return a;
+      return [
+        ...a,
+        { id: `c${a.length}${col.id.slice(-3)}`, columnId: col.id, op: opsForType(col.type)[0][0], v1: "", v2: "" },
+      ];
+    });
+  const updateCond = (id: string, patch: Partial<Cond>) =>
+    setAdv((a) => a.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  const removeCond = (id: string) => setAdv((a) => a.filter((c) => c.id !== id));
+  const NEEDS_VAL = new Set(["is", "is_not", "contains", "between"]);
 
   // Apply hidden columns + filters + search.
   // Filters: OR within one column, AND across columns; "__group__" filters
@@ -116,11 +197,16 @@ export function BoardView({
             if (colId === "__group__") continue;
             if (!vals.has(it.cells[colId]?.value ?? "")) return false;
           }
+          // Advanced conditions (operators + date ranges), all must pass.
+          for (const c of adv) {
+            if (!c.columnId) continue;
+            if (!matchCond(it.cells[c.columnId]?.value ?? "", c)) return false;
+          }
           return true;
         }),
       }));
     return { ...board, columns: cols, groups };
-  }, [board, hidden, filters, q]);
+  }, [board, hidden, filters, q, adv]);
 
   // Facets for the quick-filter panel: one per group + per filterable column,
   // each with its distinct values and item counts.
@@ -335,6 +421,77 @@ export function BoardView({
               total={total}
             />
 
+            {/* Advanced filter — operators + date ranges */}
+            {advCols.length > 0 && (
+              <Popover open={advOpen} setOpen={setAdvOpen} label={`Advanced${adv.length ? ` · ${adv.length}` : ""}`}>
+                <p className="mb-1.5 text-xs font-semibold text-body">Advanced conditions</p>
+                <div className="flex max-h-72 w-72 flex-col gap-2 overflow-y-auto scroll-thin">
+                  {adv.length === 0 && <p className="text-xs text-muted">No conditions yet.</p>}
+                  {adv.map((c) => {
+                    const col = board.columns.find((x) => x.id === c.columnId);
+                    const type = col?.type ?? "text";
+                    return (
+                      <div key={c.id} className="space-y-1.5 rounded-lg border border-hair p-2">
+                        <div className="flex gap-1.5">
+                          <select
+                            value={c.columnId}
+                            onChange={(e) => {
+                              const nt = board.columns.find((x) => x.id === e.target.value)?.type ?? "text";
+                              updateCond(c.id, { columnId: e.target.value, op: opsForType(nt)[0][0], v1: "", v2: "" });
+                            }}
+                            className={miniInp}
+                          >
+                            {advCols.map((cc) => (
+                              <option key={cc.id} value={cc.id}>{cc.name}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => removeCond(c.id)}
+                            className="grid h-7 w-7 flex-none place-items-center rounded text-muted hover:bg-danger/10 hover:text-danger"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <select value={c.op} onChange={(e) => updateCond(c.id, { op: e.target.value })} className={miniInp}>
+                          {opsForType(type).map(([v, l]) => (
+                            <option key={v} value={v}>{l}</option>
+                          ))}
+                        </select>
+                        {NEEDS_VAL.has(c.op) &&
+                          (type === "status" ? (
+                            <select value={c.v1 ?? ""} onChange={(e) => updateCond(c.id, { v1: e.target.value })} className={miniInp}>
+                              <option value="">(pick label)</option>
+                              {col?.labels.map((l) => (
+                                <option key={l.id} value={l.id}>{l.label}</option>
+                              ))}
+                            </select>
+                          ) : c.op === "between" ? (
+                            <div className="flex gap-1.5">
+                              <input type="date" value={c.v1 ?? ""} onChange={(e) => updateCond(c.id, { v1: e.target.value })} className={miniInp} />
+                              <input type="date" value={c.v2 ?? ""} onChange={(e) => updateCond(c.id, { v2: e.target.value })} className={miniInp} />
+                            </div>
+                          ) : (
+                            <input
+                              type={type === "number" ? "number" : type === "date" ? "date" : "text"}
+                              value={c.v1 ?? ""}
+                              onChange={(e) => updateCond(c.id, { v1: e.target.value })}
+                              placeholder="value"
+                              className={miniInp}
+                            />
+                          ))}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <button onClick={addCond} className="text-sm font-medium text-teal hover:underline">+ Add condition</button>
+                  {adv.length > 0 && (
+                    <button onClick={() => setAdv([])} className="text-xs text-muted hover:text-danger">Clear all</button>
+                  )}
+                </div>
+              </Popover>
+            )}
+
             {/* Sort control */}
             {sortableCols.length > 0 && (
               <Popover open={sortOpen} setOpen={setSortOpen} label="Sort">
@@ -483,6 +640,9 @@ export function BoardView({
 
 const pillBtn =
   "rounded-lg border border-hair px-3 py-1.5 text-xs font-medium text-body hover:bg-canvas";
+
+const miniInp =
+  "min-w-0 flex-1 rounded-md border border-hair bg-white px-2 py-1.5 text-xs outline-none focus:border-teal";
 
 function BoardTitle({ boardId, name, readOnly }: { boardId: string; name: string; readOnly: boolean }) {
   const [editing, setEditing] = useState(false);
