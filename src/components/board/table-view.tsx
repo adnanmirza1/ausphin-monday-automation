@@ -471,7 +471,7 @@ function ColumnHeader({
 
   return (
     <div
-      className="relative"
+      className="group relative"
       onDragOver={(e) => {
         if (!readOnly) e.preventDefault();
       }}
@@ -493,14 +493,24 @@ function ColumnHeader({
           e.dataTransfer.effectAllowed = "move";
         }}
         onClick={() => (menu ? closeMenu() : openMenu())}
-        title={column.description || undefined}
-        className="flex w-full cursor-grab items-center justify-center gap-1 px-2 py-2 text-xs font-semibold text-muted hover:text-body active:cursor-grabbing"
+        title={column.description || "Click for column options"}
+        className="flex w-full cursor-grab items-center justify-center gap-1 px-2 py-2 pr-5 text-xs font-semibold text-muted hover:text-body active:cursor-grabbing"
       >
         <span className="font-mono text-[10px] text-muted/60">{COLUMN_TYPE_META[column.type]?.icon}</span>
         <span className="truncate">{column.name}</span>
         {column.required && <span className="text-danger" title="Required">*</span>}
         {column.description && <span className="text-muted/60" title={column.description}>ⓘ</span>}
       </button>
+      {!readOnly && (
+        <span
+          className={`pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-sm leading-none text-muted transition-opacity ${
+            menu ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          }`}
+          title="Column options"
+        >
+          ⋮
+        </span>
+      )}
       {menu && menuPos &&
         createPortal(
           <>
@@ -807,60 +817,103 @@ function LabelEditor({
 
   const update = (i: number, patch: Partial<StatusLabel>) =>
     setLabels((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  const addLabel = () =>
+    setLabels((ls) => [
+      ...ls,
+      { id: `l${Math.random().toString(36).slice(2, 8)}`, label: "New label", color: PALETTE[ls.length % PALETTE.length] },
+    ]);
+  const save = () => {
+    start(() => void setColumnLabels(boardId, columnId, labels));
+    onClose();
+  };
 
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center p-4">
-      <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 flex max-h-[85vh] w-full max-w-sm flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
-        <h2 className="text-lg font-bold text-ink">Edit status labels</h2>
-        <div className="mt-3 flex flex-col gap-2 overflow-y-auto">
+  return createPortal(
+    <div className="fixed inset-0 z-[60] grid place-items-center p-4">
+      <div className="absolute inset-0 bg-ink/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 flex max-h-[88vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-hair bg-white shadow-pop">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-hair px-5 py-4">
+          <div>
+            <h2 className="text-base font-bold text-ink">Edit status labels</h2>
+            <p className="mt-0.5 text-xs text-muted">Rename, recolour, add or remove labels.</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="grid h-7 w-7 place-items-center rounded-lg text-muted hover:bg-canvas hover:text-ink"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Rows (scroll) */}
+        <div className="flex-1 space-y-2.5 overflow-y-auto px-5 py-4 scroll-thin">
+          {labels.length === 0 && (
+            <p className="py-6 text-center text-sm text-muted">No labels yet — add your first below.</p>
+          )}
           {labels.map((l, i) => (
-            <div key={l.id} className="flex items-center gap-2">
-              <input
-                type="color"
-                value={l.color}
-                onChange={(e) => update(i, { color: e.target.value })}
-                className="h-8 w-9 flex-none rounded border border-hair"
-              />
+            <div key={l.id} className="flex items-center gap-3 rounded-xl border border-hair p-2.5">
+              {/* colour picker + swatch */}
+              <label className="relative h-9 w-9 flex-none cursor-pointer overflow-hidden rounded-lg border border-hair" title="Pick colour">
+                <span className="block h-full w-full" style={{ background: l.color }} />
+                <input
+                  type="color"
+                  value={l.color}
+                  onChange={(e) => update(i, { color: e.target.value })}
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                />
+              </label>
+              {/* name */}
               <input
                 value={l.label}
                 onChange={(e) => update(i, { label: e.target.value })}
-                className="flex-1 rounded-md border border-hair px-2 py-1 text-sm outline-none focus:border-teal"
+                placeholder="Label name"
+                className="min-w-0 flex-1 rounded-lg border border-hair px-3 py-2 text-sm outline-none focus:border-teal"
               />
+              {/* live preview pill */}
+              <span
+                className="hidden max-w-[7rem] truncate rounded-full px-2.5 py-1 text-xs font-medium text-white sm:inline-block"
+                style={{ background: l.color }}
+                title="Preview"
+              >
+                {l.label.trim() || "Preview"}
+              </span>
+              {/* delete */}
               <button
                 onClick={() => setLabels((ls) => ls.filter((_, idx) => idx !== i))}
-                className="grid h-6 w-6 place-items-center rounded text-muted hover:bg-danger/10 hover:text-danger"
+                className="grid h-8 w-8 flex-none place-items-center rounded-lg text-muted hover:bg-danger/10 hover:text-danger"
+                title="Delete label"
               >
                 ✕
               </button>
             </div>
           ))}
-        </div>
-        <button
-          onClick={() =>
-            setLabels((ls) => [
-              ...ls,
-              { id: `l${Math.random().toString(36).slice(2, 8)}`, label: "New label", color: PALETTE[ls.length % PALETTE.length] },
-            ])
-          }
-          className="mt-2 text-sm text-teal hover:underline"
-        >
-          + Add label
-        </button>
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">Cancel</button>
           <button
-            onClick={() => {
-              start(() => void setColumnLabels(boardId, columnId, labels));
-              onClose();
-            }}
-            className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep"
+            onClick={addLabel}
+            className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-hair py-2.5 text-sm font-medium text-teal hover:border-teal hover:bg-teal/5"
           >
-            Save labels
+            <span className="text-base leading-none">＋</span> Add label
           </button>
         </div>
+
+        {/* Sticky footer */}
+        <div className="flex items-center justify-between border-t border-hair px-5 py-3">
+          <span className="text-xs text-muted">{labels.length} label{labels.length === 1 ? "" : "s"}</span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">
+              Cancel
+            </button>
+            <button
+              onClick={save}
+              className="rounded-lg bg-teal px-5 py-2 text-sm font-semibold text-white hover:bg-teal-deep"
+            >
+              Save labels
+            </button>
+          </div>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
