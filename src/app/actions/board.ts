@@ -99,6 +99,28 @@ export async function moveItemToGroup(
   touch(boardId);
 }
 
+// Bulk actions on many selected items at once (Part: bulk selection).
+export async function bulkDeleteItems(boardId: string, itemIds: string[]) {
+  await requireEditor();
+  if (itemIds.length === 0) return;
+  await db.item.deleteMany({ where: { id: { in: itemIds }, boardId } });
+  touch(boardId);
+}
+
+export async function bulkMoveItems(
+  boardId: string,
+  itemIds: string[],
+  groupId: string
+) {
+  await requireEditor();
+  if (itemIds.length === 0) return;
+  let count = await db.item.count({ where: { groupId } });
+  for (const id of itemIds) {
+    await db.item.update({ where: { id }, data: { groupId, position: count++ } });
+  }
+  touch(boardId);
+}
+
 // Drag-and-drop: place `itemId` into `targetGroupId` before `beforeItemId`
 // (or at the end when null), then reindex positions of that group.
 export async function reorderItem(

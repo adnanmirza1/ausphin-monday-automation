@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { createContext, useContext, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import type { BoardData, ColumnData, GroupData, ItemData, PersonLite } from "@/lib/board-types";
 import {
@@ -32,7 +32,20 @@ import {
   setColumnRequired,
   setColumnDefault,
   sortItemsByColumn,
+  bulkDeleteItems,
+  bulkMoveItems,
 } from "@/app/actions/board";
+
+// ── Bulk selection (shared across all groups of the board) ──
+type SelCtx = {
+  selected: Set<string>;
+  toggle: (id: string) => void;
+  setMany: (ids: string[], on: boolean) => void;
+  clear: () => void;
+  enabled: boolean;
+};
+const SelectionContext = createContext<SelCtx | null>(null);
+const useSel = () => useContext(SelectionContext);
 
 const NAME_W = 300;
 const COL_W = 168;
@@ -74,23 +87,115 @@ export function TableView({
   colorBy?: string | null;
   pinFirst?: boolean;
 }) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggle = (id: string) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  const setMany = (ids: string[], on: boolean) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      ids.forEach((id) => (on ? n.add(id) : n.delete(id)));
+      return n;
+    });
+  const clear = () => setSelected(new Set());
+  const sel: SelCtx = { selected, toggle, setMany, clear, enabled: !readOnly };
+
   return (
-    <div className="min-w-max p-4 sm:p-6">
-      {board.groups.map((g) => (
-        <GroupBlock
-          key={g.id}
-          board={board}
-          group={g}
-          people={people}
-          readOnly={readOnly}
-          connectionOptions={connectionOptions}
-          rowHeight={rowHeight}
-          colorBy={colorBy}
-          pinFirst={pinFirst}
-        />
-      ))}
-      {!readOnly && <AddGroup boardId={board.id} />}
-    </div>
+    <SelectionContext.Provider value={sel}>
+      <div className="min-w-max p-4 sm:p-6">
+        {board.groups.map((g) => (
+          <GroupBlock
+            key={g.id}
+            board={board}
+            group={g}
+            people={people}
+            readOnly={readOnly}
+            connectionOptions={connectionOptions}
+            rowHeight={rowHeight}
+            colorBy={colorBy}
+            pinFirst={pinFirst}
+          />
+        ))}
+        {!readOnly && <AddGroup boardId={board.id} />}
+      </div>
+      {selected.size > 0 && <BulkBar board={board} selected={selected} clear={clear} />}
+    </SelectionContext.Provider>
+  );
+}
+
+// Floating action bar shown while items are selected.
+function BulkBar({
+  board,
+  selected,
+  clear,
+}: {
+  board: BoardData;
+  selected: Set<string>;
+  clear: () => void;
+}) {
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [, start] = useTransition();
+  const ids = [...selected];
+
+  return createPortal(
+    <div className="fixed bottom-6 left-1/2 z-[55] flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-hair bg-white px-3 py-2 shadow-pop">
+      <span className="px-1 text-sm font-semibold text-ink">{ids.length} selected</span>
+      <span className="mx-1 h-5 w-px bg-hair" />
+
+      <div className="relative">
+        <button
+          onClick={() => setMoveOpen((o) => !o)}
+          className="rounded-lg px-3 py-1.5 text-sm text-body hover:bg-canvas"
+        >
+          ⇄ Move to
+        </button>
+        {moveOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setMoveOpen(false)} />
+            <div className="absolute bottom-full left-0 z-50 mb-1 w-44 rounded-lg border border-hair bg-white p-1 shadow-pop">
+              {board.groups.map((g) => (
+                <button
+                  key={g.id}
+                  onClick={() => {
+                    setMoveOpen(false);
+                    start(async () => {
+                      await bulkMoveItems(board.id, ids, g.id);
+                      clear();
+                    });
+                  }}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas"
+                >
+                  <span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: g.color }} />
+                  {g.name}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <button
+        onClick={() => {
+          if (confirm(`Delete ${ids.length} item${ids.length === 1 ? "" : "s"}? This can't be undone.`))
+            start(async () => {
+              await bulkDeleteItems(board.id, ids);
+              clear();
+            });
+        }}
+        className="rounded-lg px-3 py-1.5 text-sm font-medium text-danger hover:bg-danger/10"
+      >
+        🗑 Delete
+      </button>
+
+      <span className="mx-1 h-5 w-px bg-hair" />
+      <button onClick={clear} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-canvas">
+        Clear
+      </button>
+    </div>,
+    document.body
   );
 }
 
@@ -120,7 +225,10 @@ function GroupBlock({
   const [name, setName] = useState(group.name);
   const [colorOpen, setColorOpen] = useState(false);
   const [, start] = useTransition();
+  const sel = useSel();
   const rowWidth = NAME_W + board.columns.length * COL_W;
+  const allSel = group.items.length > 0 && group.items.every((it) => sel?.selected.has(it.id));
+  const someSel = group.items.some((it) => sel?.selected.has(it.id));
 
   return (
     <div className="mb-7 animate-rise">
@@ -239,6 +347,18 @@ function GroupBlock({
             style={{ width: NAME_W }}
             className={`flex items-center gap-1.5 px-3 py-2 ${pinFirst ? `${PIN_CLS} z-20 bg-canvas` : ""}`}
           >
+            {!readOnly && sel && group.items.length > 0 && (
+              <input
+                type="checkbox"
+                checked={allSel}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSel && !allSel;
+                }}
+                onChange={(e) => sel.setMany(group.items.map((it) => it.id), e.target.checked)}
+                className="h-3.5 w-3.5 flex-none cursor-pointer accent-teal"
+                title="Select all in this group"
+              />
+            )}
             <span className="h-full w-1.5 flex-none opacity-0" />
             <span className="text-xs font-semibold text-muted">Item</span>
           </div>
@@ -301,7 +421,9 @@ function Row({
   const [over, setOver] = useState(false);
   const [, start] = useTransition();
   const { open } = useBoardUI();
+  const sel = useSel();
   const tint = tintFor(board, item, colorBy);
+  const isSel = sel?.selected.has(item.id) ?? false;
 
   return (
     <div
@@ -330,6 +452,17 @@ function Row({
         style={{ width: NAME_W, background: pinFirst ? tint ?? "#ffffff" : undefined }}
       >
         <span className="h-full w-1.5 flex-none" style={{ background: group.color }} />
+        {!readOnly && sel && (
+          <input
+            type="checkbox"
+            checked={isSel}
+            onChange={() => sel.toggle(item.id)}
+            className={`ml-1.5 h-3.5 w-3.5 flex-none cursor-pointer accent-teal ${
+              isSel ? "" : "opacity-0 group-hover:opacity-100"
+            }`}
+            title="Select item"
+          />
+        )}
         {!readOnly && (
           <span
             draggable
