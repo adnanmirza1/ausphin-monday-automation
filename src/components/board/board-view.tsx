@@ -11,6 +11,7 @@ import { CalendarView } from "./calendar-view";
 import { AddColumnButton } from "./add-column";
 import { FormButton } from "./form-button";
 import { DocsButton, type TemplateLite } from "./docs-button";
+import { ImportExportButton } from "./data-io";
 import { BoardUIProvider } from "./board-ui";
 import { createView, deleteView, pinView, type ViewConfig } from "@/app/actions/views";
 
@@ -222,6 +223,7 @@ export function BoardView({
             <div className="flex items-center gap-2">
               {!readOnly && <DocsButton boardId={board.id} templates={templates} columns={board.columns} />}
               {!readOnly && <FormButton boardId={board.id} form={board.form} columns={board.columns} groups={board.groups.map((g) => ({ id: g.id, name: g.name }))} />}
+              <ImportExportButton board={board} />
               {!readOnly && (
                 <Link href={`/boards/${board.id}/automations`} className={pillBtn}>⚡ Automate</Link>
               )}

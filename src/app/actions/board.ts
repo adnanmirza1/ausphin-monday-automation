@@ -99,6 +99,38 @@ export async function moveItemToGroup(
   touch(boardId);
 }
 
+// Import rows (from a CSV) into a group. `mapping[i]` says where CSV column i
+// goes: "__name__" (item name), a columnId, or "" to skip.
+export async function importItems(
+  boardId: string,
+  groupId: string,
+  header: string[],
+  rows: string[][],
+  mapping: string[]
+) {
+  await requireEditor();
+  const nameIdx = mapping.findIndex((m) => m === "__name__");
+  let count = await db.item.count({ where: { groupId } });
+  let created = 0;
+  for (const row of rows) {
+    const name = (nameIdx >= 0 ? row[nameIdx] : row[0])?.trim() || "Untitled";
+    const item = await db.item.create({
+      data: { boardId, groupId, name, position: count++ },
+    });
+    for (let i = 0; i < mapping.length; i++) {
+      const target = mapping[i];
+      if (!target || target === "__name__") continue;
+      const value = (row[i] ?? "").trim();
+      if (!value) continue;
+      await db.cell.create({ data: { itemId: item.id, columnId: target, value } });
+    }
+    created++;
+  }
+  void header;
+  touch(boardId);
+  return created;
+}
+
 // Bulk actions on many selected items at once (Part: bulk selection).
 export async function bulkDeleteItems(boardId: string, itemIds: string[]) {
   await requireEditor();
