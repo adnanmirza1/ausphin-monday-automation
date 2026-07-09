@@ -34,6 +34,11 @@ export default async function AutomationsPage({
     orderBy: { createdAt: "asc" },
     select: { id: true, name: true },
   });
+  const boards = await db.board.findMany({
+    where: { environment: { orgId: user.orgId }, archivedAt: null },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
 
   const columns = board.columns.map((c) => {
     let labels: StatusLabel[] = [];
@@ -54,6 +59,7 @@ export default async function AutomationsPage({
       groups={board.groups.map((g) => ({ id: g.id, name: g.name, color: g.color }))}
       departments={departments}
       templates={templates}
+      boards={boards}
       automations={board.automations.map((a) => ({
         id: a.id,
         name: a.name,

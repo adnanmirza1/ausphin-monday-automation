@@ -32,6 +32,7 @@ export function AutomationsPanel({
   groups,
   departments,
   templates,
+  boards = [],
   automations,
 }: {
   boardId: string;
@@ -41,6 +42,7 @@ export function AutomationsPanel({
   groups: Grp[];
   departments: Dep[];
   templates: Tpl[];
+  boards?: { id: string; name: string }[];
   automations: Auto[];
 }) {
   const [q, setQ] = useState("");
@@ -50,6 +52,7 @@ export function AutomationsPanel({
   const statusCols = columns.filter((c) => c.type === "status");
   const personCols = columns.filter((c) => c.type === "person");
   const numberCols = columns.filter((c) => c.type === "number");
+  const emailCols = columns.filter((c) => c.type === "email");
 
   const filtered = automations.filter(
     (a) =>
@@ -155,6 +158,9 @@ export function AutomationsPanel({
           statusCols={statusCols}
           personCols={personCols}
           numberCols={numberCols}
+          emailCols={emailCols}
+          allColumns={columns}
+          boards={boards}
           groups={groups}
           departments={departments}
           templates={templates}
@@ -192,6 +198,12 @@ function describe(
     when = `When ${colName(t.columnId)} changes to ${
       t.to === "any" ? "any status" : label(t.columnId, t.to)
     }`;
+  else if (t?.type === "column_changes")
+    when = `When ${colName(t.columnId)} ${t.when === "not_empty" ? "becomes non-empty" : "changes"}`;
+  else if (t?.type === "person_assigned")
+    when = `When a person is assigned in ${colName(t.columnId)}`;
+  else if (t?.type === "item_moved")
+    when = `When an item moves to ${t.groupId === "any" ? "any group" : `“${grp(t.groupId)}”`}`;
 
   let then = "do something";
   if (a?.type === "move_to_group") then = `move it to “${grp(a.groupId)}”`;
@@ -205,6 +217,10 @@ function describe(
     then = `generate “${templates.find((t) => t.id === a.templateId)?.name ?? "document"}”`;
   else if (a?.type === "request_invoice")
     then = `request an invoice to Finance (${a.account === "global" ? "Global" : "PTY"})`;
+  else if (a?.type === "send_email")
+    then = `send an email${a.subject ? ` “${a.subject}”` : ""}`;
+  else if (a?.type === "create_item_in_board")
+    then = `create an item in another board${a.connect ? " (connected)" : ""}`;
 
   return { when, then };
 }
@@ -312,6 +328,9 @@ function CreateModal({
   statusCols,
   personCols,
   numberCols,
+  emailCols,
+  allColumns,
+  boards,
   groups,
   departments,
   templates,
@@ -322,6 +341,9 @@ function CreateModal({
   statusCols: Col[];
   personCols: Col[];
   numberCols: Col[];
+  emailCols: Col[];
+  allColumns: Col[];
+  boards: { id: string; name: string }[];
   groups: Grp[];
   departments: Dep[];
   templates: Tpl[];
@@ -336,9 +358,13 @@ function CreateModal({
   const [, start] = useTransition();
 
   // trigger state
-  const [tType, setTType] = useState<"item_created" | "status_changes">(et.type ?? "status_changes");
+  const [tType, setTType] = useState<
+    "item_created" | "status_changes" | "column_changes" | "person_assigned" | "item_moved"
+  >(et.type ?? "status_changes");
   const [tCol, setTCol] = useState(et.columnId ?? statusCols[0]?.id ?? "");
   const [tTo, setTTo] = useState(et.to ?? "any");
+  const [tWhen, setTWhen] = useState<"any" | "not_empty">(et.when ?? "any");
+  const [tGroup, setTGroup] = useState(et.groupId ?? "any");
 
   // action state
   const [aType, setAType] = useState<
@@ -348,7 +374,20 @@ function CreateModal({
     | "assign_round_robin"
     | "generate_document"
     | "request_invoice"
+    | "send_email"
+    | "create_item_in_board"
   >(ea.type ?? "move_to_group");
+  const [aEmailCol, setAEmailCol] = useState(
+    (ea.type === "send_email" ? ea.toColumnId : "") || emailCols[0]?.id || ""
+  );
+  const [aSubject, setASubject] = useState(ea.type === "send_email" ? ea.subject ?? "" : "");
+  const [aBody, setABody] = useState(ea.type === "send_email" ? ea.body ?? "" : "");
+  const [aTargetBoard, setATargetBoard] = useState(
+    (ea.type === "create_item_in_board" ? ea.boardId : "") || boards.find((b) => b.id !== boardId)?.id || ""
+  );
+  const [aConnect, setAConnect] = useState<boolean>(
+    ea.type === "create_item_in_board" ? !!ea.connect : true
+  );
   const [aGroup, setAGroup] = useState(ea.groupId ?? groups[0]?.id ?? "");
   const [aStatusCol, setAStatusCol] = useState(
     (ea.type === "set_status" ? ea.columnId : "") || statusCols[0]?.id || ""
@@ -369,10 +408,26 @@ function CreateModal({
   const aStatusColObj = statusCols.find((c) => c.id === aStatusCol);
 
   function build() {
-    const trigger =
-      tType === "item_created"
-        ? { type: "item_created" }
-        : { type: "status_changes", columnId: tCol, to: tTo };
+    let trigger: Record<string, unknown>;
+    switch (tType) {
+      case "item_created":
+        trigger = { type: "item_created" };
+        break;
+      case "status_changes":
+        trigger = { type: "status_changes", columnId: tCol, to: tTo };
+        break;
+      case "column_changes":
+        trigger = { type: "column_changes", columnId: tCol, when: tWhen };
+        break;
+      case "person_assigned":
+        trigger = { type: "person_assigned", columnId: tCol };
+        break;
+      case "item_moved":
+        trigger = { type: "item_moved", groupId: tGroup };
+        break;
+      default:
+        trigger = { type: "item_created" };
+    }
 
     let action: Record<string, unknown>;
     switch (aType) {
@@ -394,6 +449,14 @@ function CreateModal({
       case "request_invoice":
         action = { type: "request_invoice", account: aAccount, amountColumnId: aAmountCol || undefined };
         break;
+      case "send_email":
+        action = { type: "send_email", toColumnId: aEmailCol || undefined, subject: aSubject, body: aBody };
+        break;
+      case "create_item_in_board":
+        action = { type: "create_item_in_board", boardId: aTargetBoard, connect: aConnect };
+        break;
+      default:
+        action = { type: "move_to_group", groupId: aGroup };
     }
     const input = { name, folder, trigger, action };
     start(() =>
@@ -429,6 +492,9 @@ function CreateModal({
             <select value={tType} onChange={(e) => setTType(e.target.value as any)} className={inp}>
               <option value="status_changes">A status changes</option>
               <option value="item_created">An item is created</option>
+              <option value="column_changes">A column changes</option>
+              <option value="person_assigned">A person is assigned</option>
+              <option value="item_moved">An item moves to a group</option>
             </select>
             {tType === "status_changes" && (
               <div className="mt-2 grid grid-cols-2 gap-2">
@@ -445,6 +511,35 @@ function CreateModal({
                 </select>
               </div>
             )}
+            {tType === "column_changes" && (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <select value={tCol} onChange={(e) => setTCol(e.target.value)} className={inp}>
+                  {allColumns.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <select value={tWhen} onChange={(e) => setTWhen(e.target.value as "any" | "not_empty")} className={inp}>
+                  <option value="any">on any change</option>
+                  <option value="not_empty">when it becomes non-empty</option>
+                </select>
+              </div>
+            )}
+            {tType === "person_assigned" && (
+              <select value={tCol} onChange={(e) => setTCol(e.target.value)} className={`${inp} mt-2`}>
+                {personCols.length === 0 && <option value="">No person column</option>}
+                {personCols.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            )}
+            {tType === "item_moved" && (
+              <select value={tGroup} onChange={(e) => setTGroup(e.target.value)} className={`${inp} mt-2`}>
+                <option value="any">to any group</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>to “{g.name}”</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* THEN */}
@@ -459,6 +554,8 @@ function CreateModal({
               <option value="assign_round_robin">Assign person (round robin)</option>
               <option value="generate_document">Generate a document</option>
               <option value="request_invoice">Request an invoice (to Finance)</option>
+              <option value="send_email">Send an email</option>
+              <option value="create_item_in_board">Create item in another board</option>
             </select>
 
             {aType === "move_to_group" && (
@@ -537,6 +634,44 @@ function CreateModal({
                 </select>
               </div>
             )}
+            {aType === "send_email" && (
+              <div className="mt-2 grid gap-2">
+                <select value={aEmailCol} onChange={(e) => setAEmailCol(e.target.value)} className={inp}>
+                  {emailCols.length === 0 && <option value="">First email column on the item</option>}
+                  {emailCols.map((c) => (
+                    <option key={c.id} value={c.id}>Send to: {c.name}</option>
+                  ))}
+                </select>
+                <input value={aSubject} onChange={(e) => setASubject(e.target.value)} placeholder="Subject — e.g. Welcome {{Item}}!" className={inp} />
+                <textarea
+                  value={aBody}
+                  onChange={(e) => setABody(e.target.value)}
+                  rows={4}
+                  placeholder={"Body — use {{Item}}, {{Program}}, {{Email}}…\n\nHi {{Item}},\nThank you for registering."}
+                  className={`${inp} resize-y`}
+                />
+                {/* Live preview */}
+                <div className="rounded-lg border border-hair bg-white p-2.5">
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Preview (sample data)</p>
+                  <p className="text-xs font-semibold text-ink">{previewText(aSubject) || "(no subject)"}</p>
+                  <p className="mt-1 whitespace-pre-wrap text-xs text-body">{previewText(aBody) || "(empty body)"}</p>
+                </div>
+              </div>
+            )}
+            {aType === "create_item_in_board" && (
+              <div className="mt-2 grid gap-2">
+                <select value={aTargetBoard} onChange={(e) => setATargetBoard(e.target.value)} className={inp}>
+                  {boards.filter((b) => b.id !== boardId).length === 0 && <option value="">No other boards</option>}
+                  {boards.filter((b) => b.id !== boardId).map((b) => (
+                    <option key={b.id} value={b.id}>Create in: {b.name}</option>
+                  ))}
+                </select>
+                <label className="flex items-center gap-2 text-sm text-body">
+                  <input type="checkbox" checked={aConnect} onChange={(e) => setAConnect(e.target.checked)} />
+                  Connect the two items (enables mirror columns)
+                </label>
+              </div>
+            )}
           </div>
         </div>
 
@@ -555,6 +690,20 @@ function CreateModal({
       </div>
     </div>
   );
+}
+
+// Substitute {{placeholders}} with sample values for the email preview.
+function previewText(t: string): string {
+  const samples: Record<string, string> = {
+    item: "Maverick Estacio",
+    name: "Maverick Estacio",
+    email: "maverick@example.com",
+    program: "SAP 400",
+    phone: "+61 400 000 000",
+    status: "New",
+    owner: "Gem Cruz",
+  };
+  return t.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, k) => samples[String(k).toLowerCase()] ?? `[${String(k).trim()}]`);
 }
 
 const inp =

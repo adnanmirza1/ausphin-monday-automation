@@ -96,6 +96,7 @@ export async function moveItemToGroup(
     where: { id: itemId },
     data: { groupId, position: count },
   });
+  await runAutomations({ type: "item_moved", boardId, itemId, groupId });
   touch(boardId);
 }
 
@@ -164,6 +165,8 @@ export async function reorderItem(
   await requireEditor();
   if (itemId === beforeItemId) return;
 
+  const moved = await db.item.findUnique({ where: { id: itemId }, select: { groupId: true } });
+
   const existing = await db.item.findMany({
     where: { groupId: targetGroupId },
     orderBy: { position: "asc" },
@@ -179,6 +182,8 @@ export async function reorderItem(
       data: { position: i, ...(ids[i] === itemId ? { groupId: targetGroupId } : {}) },
     });
   }
+  if (moved && moved.groupId !== targetGroupId)
+    await runAutomations({ type: "item_moved", boardId, itemId, groupId: targetGroupId });
   touch(boardId);
 }
 
@@ -202,6 +207,8 @@ export async function setCell(
   if (column?.type === "status") {
     await runAutomations({ type: "status_changes", boardId, itemId, columnId, value });
   }
+  // Generic column-changed trigger (any column).
+  await runAutomations({ type: "column_changes", boardId, itemId, columnId, value });
   touch(boardId);
 }
 
@@ -220,6 +227,7 @@ export async function setPersonCell(
     create: { itemId, columnId, personId, value: personId },
     update: { personId, value: personId },
   });
+  await runAutomations({ type: "person_assigned", boardId, itemId, columnId, personId });
   touch(boardId);
 }
 

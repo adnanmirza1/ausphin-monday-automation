@@ -1,21 +1,22 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { generateDocumentCore } from "@/lib/generate-doc";
+import { sendMail } from "@/lib/mailer";
 
 // Events emitted by board mutations.
 export type AutomationEvent =
   | { type: "item_created"; boardId: string; itemId: string }
-  | {
-      type: "status_changes";
-      boardId: string;
-      itemId: string;
-      columnId: string;
-      value: string | null;
-    };
+  | { type: "status_changes"; boardId: string; itemId: string; columnId: string; value: string | null }
+  | { type: "column_changes"; boardId: string; itemId: string; columnId: string; value: string | null }
+  | { type: "person_assigned"; boardId: string; itemId: string; columnId: string; personId: string | null }
+  | { type: "item_moved"; boardId: string; itemId: string; groupId: string };
 
 type Trigger =
   | { type: "item_created" }
-  | { type: "status_changes"; columnId: string; to: string }; // to = labelId | "any"
+  | { type: "status_changes"; columnId: string; to: string } // to = labelId | "any"
+  | { type: "column_changes"; columnId: string; when?: "any" | "not_empty" }
+  | { type: "person_assigned"; columnId: string }
+  | { type: "item_moved"; groupId: string }; // groupId | "any"
 
 type Action =
   | { type: "move_to_group"; groupId: string }
@@ -23,7 +24,9 @@ type Action =
   | { type: "notify"; target: "person" | "department"; targetId?: string; message: string }
   | { type: "assign_round_robin"; columnId: string; departmentId: string }
   | { type: "generate_document"; templateId: string }
-  | { type: "request_invoice"; account: string; amountColumnId?: string };
+  | { type: "request_invoice"; account: string; amountColumnId?: string }
+  | { type: "send_email"; toColumnId?: string; subject: string; body: string }
+  | { type: "create_item_in_board"; boardId: string; connect?: boolean };
 
 function parse<T>(raw: string): T | null {
   try {
@@ -39,7 +42,37 @@ function matches(trigger: Trigger, event: AutomationEvent): boolean {
     if (trigger.columnId !== event.columnId) return false;
     return trigger.to === "any" || trigger.to === event.value;
   }
+  if (trigger.type === "column_changes" && event.type === "column_changes") {
+    if (trigger.columnId !== event.columnId) return false;
+    return trigger.when === "not_empty" ? !!event.value : true;
+  }
+  if (trigger.type === "person_assigned" && event.type === "person_assigned") {
+    return trigger.columnId === event.columnId && !!event.personId;
+  }
+  if (trigger.type === "item_moved" && event.type === "item_moved") {
+    return trigger.groupId === "any" || trigger.groupId === event.groupId;
+  }
   return trigger.type === "item_created";
+}
+
+// Render {{Placeholders}} in email templates from an item's data.
+async function renderTemplate(itemId: string, text: string): Promise<string> {
+  const item = await db.item.findUnique({
+    where: { id: itemId },
+    include: { cells: { include: { column: true, person: true } } },
+  });
+  if (!item) return text;
+  const map: Record<string, string> = { item: item.name, name: item.name };
+  for (const c of item.cells) {
+    let v = c.value ?? "";
+    if (c.column.type === "status") {
+      try {
+        v = (JSON.parse(c.column.config).labels ?? []).find((l: { id: string }) => l.id === c.value)?.label ?? "";
+      } catch {}
+    } else if (c.column.type === "person") v = c.person?.name ?? "";
+    map[c.column.name.toLowerCase()] = v;
+  }
+  return text.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, k) => map[String(k).toLowerCase()] ?? "");
 }
 
 // Runs a single non-recursive pass of automations for the board & event.
@@ -145,6 +178,81 @@ async function execute(action: Action, event: AutomationEvent) {
           status: "requested",
         },
       });
+      break;
+    }
+
+    case "send_email": {
+      const it = await db.item.findUnique({
+        where: { id: itemId },
+        include: { cells: { include: { column: true } } },
+      });
+      if (!it) break;
+      // Recipient = chosen email column, else the first email column on the item.
+      const toCell = action.toColumnId
+        ? it.cells.find((c) => c.columnId === action.toColumnId)
+        : it.cells.find((c) => c.column.type === "email");
+      const to = toCell?.value ?? "";
+      const subject = await renderTemplate(itemId, action.subject || "");
+      const body = await renderTemplate(itemId, action.body || "");
+      if (to) {
+        await sendMail({ to, subject: subject || "(no subject)", html: `<p>${body.replace(/\n/g, "<br/>")}</p>` });
+      }
+      // Record what was sent on the item's timeline (so it's visible even in dev).
+      await db.update.create({
+        data: {
+          itemId,
+          body: `✉ Automated email${to ? ` → ${to}` : " (no recipient)"}: ${subject}\n\n${body}`,
+          mentions: "[]",
+        },
+      });
+      break;
+    }
+
+    case "create_item_in_board": {
+      const src = await db.item.findUnique({
+        where: { id: itemId },
+        include: { cells: { include: { column: true } }, board: { include: { columns: true } } },
+      });
+      if (!src) break;
+      const targetGroup = await db.group.findFirst({
+        where: { boardId: action.boardId },
+        orderBy: { position: "asc" },
+      });
+      if (!targetGroup) break;
+      const count = await db.item.count({ where: { groupId: targetGroup.id } });
+      const newItem = await db.item.create({
+        data: { boardId: action.boardId, groupId: targetGroup.id, name: src.name, position: count },
+      });
+      // Copy the email value across so the two records can be matched/mirrored.
+      const srcEmail = src.cells.find((c) => c.column.type === "email");
+      if (srcEmail?.value) {
+        const targetEmailCol = await db.column.findFirst({
+          where: { boardId: action.boardId, type: "email" },
+        });
+        if (targetEmailCol)
+          await db.cell.create({
+            data: { itemId: newItem.id, columnId: targetEmailCol.id, value: srcEmail.value },
+          });
+      }
+      // Optionally link the source item to the new one via a connection column
+      // on the source board that targets action.boardId (enables mirrors).
+      if (action.connect) {
+        const connCol = src.board.columns.find((c) => {
+          if (c.type !== "connection") return false;
+          try {
+            return JSON.parse(c.config).targetBoardId === action.boardId;
+          } catch {
+            return false;
+          }
+        });
+        if (connCol)
+          await db.cell.upsert({
+            where: { itemId_columnId: { itemId, columnId: connCol.id } },
+            create: { itemId, columnId: connCol.id, value: newItem.id },
+            update: { value: newItem.id },
+          });
+      }
+      await runAutomations({ type: "item_created", boardId: action.boardId, itemId: newItem.id });
       break;
     }
   }
