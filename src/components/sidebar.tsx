@@ -12,6 +12,7 @@ import {
   setEnvironmentColor,
 } from "@/app/actions/environment";
 import { PALETTE } from "@/lib/constants";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export type NavEnv = {
   id: string;
@@ -184,6 +185,8 @@ export function Sidebar({
             <span className="font-mono text-xs">🗄</span> Archive / Trash
           </Link>
         )}
+
+        <ThemeToggle />
 
         <div className="mt-1 flex items-center gap-2 rounded-md px-2 py-2">
           <span

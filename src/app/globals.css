@@ -23,6 +23,26 @@
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
+/* ── Dark theme: re-map the design tokens (opt-in per user) ──── */
+:root[data-theme="dark"] {
+  --color-ink: #eef1f6;
+  --color-body: #c2cad6;
+  --color-muted: #8b97a6;
+  --color-hair: #2b3442;
+  --color-surface: #1a2130;
+  --color-canvas: #10151d;
+  --color-rail: #0e131b;
+  --color-rail-hover: #1b2432;
+}
+/* Components that use fixed Tailwind whites should follow the themed surface. */
+:root[data-theme="dark"] .bg-white {
+  background-color: var(--color-surface);
+}
+:root[data-theme="dark"] .scroll-thin::-webkit-scrollbar-thumb {
+  background: #3a4658;
+  background-clip: content-box;
+}
+
 * {
   box-sizing: border-box;
 }
