@@ -8,6 +8,7 @@ import { renameBoard, archiveBoard, sortItemsByColumn } from "@/app/actions/boar
 import { TableView, type RowHeight } from "./table-view";
 import { KanbanView } from "./kanban-view";
 import { CalendarView } from "./calendar-view";
+import { ChartView } from "./chart-view";
 import { AddColumnButton } from "./add-column";
 import { FormButton } from "./form-button";
 import { DocsButton, type TemplateLite } from "./docs-button";
@@ -15,7 +16,7 @@ import { ImportExportButton } from "./data-io";
 import { BoardUIProvider } from "./board-ui";
 import { createView, deleteView, pinView, type ViewConfig } from "@/app/actions/views";
 
-type ViewMode = "table" | "kanban" | "calendar";
+type ViewMode = "table" | "kanban" | "calendar" | "chart";
 
 type SavedView = {
   id: string;
@@ -294,6 +295,9 @@ export function BoardView({
               <ModeTab active={mode === "calendar"} onClick={() => setMode("calendar")} icon="▦" disabled={!hasDate}>
                 Calendar
               </ModeTab>
+              <ModeTab active={mode === "chart"} onClick={() => setMode("chart")} icon="📊">
+                Dashboard
+              </ModeTab>
             </div>
 
             {/* Columns control */}
@@ -458,6 +462,7 @@ export function BoardView({
           )}
           {mode === "kanban" && <KanbanView board={view} people={people} readOnly={readOnly} />}
           {mode === "calendar" && <CalendarView board={view} readOnly={readOnly} />}
+          {mode === "chart" && <ChartView board={view} people={people} />}
         </div>
       </div>
 
