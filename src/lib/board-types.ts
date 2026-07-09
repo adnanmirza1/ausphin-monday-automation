@@ -49,6 +49,7 @@ export type FormConfig = {
   dedupeColumnId: string | null;
   groupId: string | null; // destination group for new submissions
   welcomeMessage: string; // shown after submit
+  slug: string | null; // short public link code (/f/<slug>)
 };
 
 export type BoardData = {

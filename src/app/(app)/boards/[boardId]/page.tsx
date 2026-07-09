@@ -166,6 +166,7 @@ export default async function BoardPage({
       dedupeColumnId: formCfg.dedupeColumnId ?? null,
       groupId: formCfg.groupId ?? null,
       welcomeMessage: formCfg.welcomeMessage ?? "",
+      slug: board.formSlug ?? null,
     },
     columns,
     groups: board.groups.map((g) => ({

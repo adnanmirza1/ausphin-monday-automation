@@ -29,7 +29,13 @@ export function FormButton({
   const [, start] = useTransition();
 
   const formCols = columns.filter((c) => FORM_TYPES.includes(c.type));
-  const link = typeof window !== "undefined" ? `${window.location.origin}/form/${boardId}` : "";
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  // Prefer the short /f/<slug> link once it exists; fall back to the full URL.
+  const link = origin
+    ? form.slug
+      ? `${origin}/f/${form.slug}`
+      : `${origin}/form/${boardId}`
+    : "";
 
   function toggleCol(id: string) {
     setCols((cs) => (cs.includes(id) ? cs.filter((x) => x !== id) : [...cs, id]));

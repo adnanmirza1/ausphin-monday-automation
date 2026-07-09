@@ -19,12 +19,31 @@ export async function saveFormConfig(
   }
 ) {
   await requireEditor();
+  // Give the form a short shareable slug the first time it's enabled.
+  let slug: string | undefined;
+  if (cfg.enabled) {
+    const existing = await db.board.findUnique({
+      where: { id: boardId },
+      select: { formSlug: true },
+    });
+    if (!existing?.formSlug) {
+      for (let i = 0; i < 5; i++) {
+        const candidate = Math.random().toString(36).slice(2, 8);
+        const clash = await db.board.findUnique({ where: { formSlug: candidate }, select: { id: true } });
+        if (!clash) {
+          slug = candidate;
+          break;
+        }
+      }
+    }
+  }
   await db.board.update({
     where: { id: boardId },
     data: {
       formEnabled: cfg.enabled,
       formTitle: cfg.title,
       formDesc: cfg.desc,
+      ...(slug ? { formSlug: slug } : {}),
       formConfig: JSON.stringify({
         columns: cfg.columns,
         dedupeColumnId: cfg.dedupeColumnId,

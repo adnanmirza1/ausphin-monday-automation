@@ -136,6 +136,7 @@ model Board {
   formTitle   String  @default("")
   formDesc    String  @default("")
   formConfig  String  @default("{}") // JSON: { columns: string[], dedupeColumnId?: string }
+  formSlug    String? @unique // short code for a shareable /f/<slug> link
 
   environment  Environment   @relation(fields: [environmentId], references: [id], onDelete: Cascade)
   groups       Group[]
