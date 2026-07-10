@@ -118,6 +118,7 @@ export default async function DashboardPage({
     .sort((a, b) => b.count - a.count)
     .slice(0, 6)
     .map((o) => ({ label: o.name, value: o.count, color: o.color }));
+  const doneRate = totalItems ? Math.min(100, Math.round((doneCount / totalItems) * 100)) : 0;
 
   // Filter options.
   const people = await db.user.findMany({
@@ -143,16 +144,33 @@ export default async function DashboardPage({
           programs={programs}
         />
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           <Kpi label="Boards" value={boardName.size} accent="#5B7A99" />
           <Kpi label="Items" value={totalItems} accent="#0B7A6F" />
           <Kpi label="Done" value={doneCount} accent="#2E9C63" />
+          <Kpi label="Completion" value={`${doneRate}%`} accent="#2D6CDF" />
           <Kpi label="People" value={ownerData.length} accent="#C67A1E" />
+        </div>
+
+        {/* monday-style Battery: at-a-glance progress across statuses */}
+        <div className="mt-4">
+          <Card title="Status battery" subtitle="Share of items by status">
+            {statusData.length === 0 ? <Empty /> : <Battery data={statusData} />}
+          </Card>
         </div>
 
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <Card title="Status distribution" subtitle="Across filtered items">
-            {statusData.length === 0 ? <Empty /> : <BarList data={statusData.map((s) => ({ label: s.label, value: s.count, color: s.color }))} />}
+            {statusData.length === 0 ? (
+              <Empty />
+            ) : (
+              <div className="flex items-center gap-5">
+                <Donut data={statusData} />
+                <div className="min-w-0 flex-1">
+                  <BarList data={statusData.map((s) => ({ label: s.label, value: s.count, color: s.color }))} />
+                </div>
+              </div>
+            )}
           </Card>
           <Card title="Items per board" subtitle="Workload by board">
             {boardData.length === 0 ? <Empty /> : <BarList data={boardData} />}
@@ -185,7 +203,7 @@ function monthRange(month: string, now: Date): { start: Date; end: Date } | null
   return null;
 }
 
-function Kpi({ label, value, accent }: { label: string; value: number; accent: string }) {
+function Kpi({ label, value, accent }: { label: string; value: number | string; accent: string }) {
   return (
     <div className="rounded-xl border border-hair bg-white p-4 shadow-soft">
       <div className="flex items-center gap-2">
@@ -227,6 +245,81 @@ function BarList({ data }: { data: { label: string; value: number; color: string
         </div>
       ))}
     </div>
+  );
+}
+
+// monday-style "Battery" — a single stacked bar of every status share + legend.
+function Battery({ data }: { data: { label: string; color: string; count: number }[] }) {
+  const total = data.reduce((s, d) => s + d.count, 0) || 1;
+  return (
+    <div>
+      <div className="flex h-7 w-full overflow-hidden rounded-lg">
+        {data.map((d, i) => {
+          const pct = (d.count / total) * 100;
+          return (
+            <div
+              key={i}
+              className="flex items-center justify-center text-[10px] font-bold text-white"
+              style={{ width: `${pct}%`, background: d.color }}
+              title={`${d.label}: ${d.count} (${Math.round(pct)}%)`}
+            >
+              {pct > 8 ? `${Math.round(pct)}%` : ""}
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
+        {data.map((d, i) => (
+          <div key={i} className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: d.color }} />
+            <span className="text-xs text-body">{d.label}</span>
+            <span className="text-xs font-semibold text-ink tabular-nums">{d.count}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Compact SVG donut for status distribution.
+function Donut({ data }: { data: { label: string; color: string; count: number }[] }) {
+  const total = data.reduce((s, d) => s + d.count, 0) || 1;
+  const r = 42;
+  const c = 2 * Math.PI * r;
+  // Precompute each segment's dash length + running offset (no render-time mutation).
+  const segments = data.reduce<{ color: string; dash: number; offset: number }[]>((acc, d) => {
+    const dash = (d.count / total) * c;
+    const offset = acc.length ? acc[acc.length - 1].offset + acc[acc.length - 1].dash : 0;
+    acc.push({ color: d.color, dash, offset });
+    return acc;
+  }, []);
+  return (
+    <svg width="120" height="120" viewBox="0 0 120 120" className="flex-none -rotate-90">
+      <circle cx="60" cy="60" r={r} fill="none" stroke="var(--color-canvas)" strokeWidth="16" />
+      {segments.map((s, i) => (
+        <circle
+          key={i}
+          cx="60"
+          cy="60"
+          r={r}
+          fill="none"
+          stroke={s.color}
+          strokeWidth="16"
+          strokeDasharray={`${s.dash} ${c - s.dash}`}
+          strokeDashoffset={-s.offset}
+        />
+      ))}
+      <text
+        x="60"
+        y="60"
+        textAnchor="middle"
+        dominantBaseline="central"
+        className="rotate-90 fill-ink text-lg font-extrabold"
+        style={{ transformOrigin: "center" }}
+      >
+        {total}
+      </text>
+    </svg>
   );
 }
 

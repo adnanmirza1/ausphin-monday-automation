@@ -116,6 +116,18 @@ export async function deleteForm(formId: string) {
   revalidatePath(`/boards/${form.boardId}`);
 }
 
+// Generate a fresh shortened public URL (/f/<slug>) for a form (Missing #3).
+export async function regenerateFormSlug(formId: string): Promise<string | null> {
+  await requireEditor();
+  const form = await db.form.findUnique({ where: { id: formId }, select: { boardId: true } });
+  if (!form) return null;
+  const slug = await freshSlug();
+  if (!slug) return null;
+  await db.form.update({ where: { id: formId }, data: { slug } });
+  revalidatePath(`/boards/${form.boardId}`);
+  return slug;
+}
+
 // ── Public submission (no auth) with de-dup by a chosen column ─
 export type SubmitState = { ok: boolean; error?: string; message?: string };
 
@@ -182,13 +194,30 @@ async function runSubmission(boardId: string, cfg: FormCfg, formData: FormData):
       if (v.value !== null)
         await db.cell.create({ data: { itemId: item.id, columnId: v.columnId, value: v.value } });
     }
-    await runAutomations({ type: "item_created", boardId, itemId: item.id });
+    // Team notification (NotWorking #1): record the submission on the item so the
+    // team sees a new-submission entry in the activity/updates timeline.
+    await db.update.create({
+      data: {
+        itemId: item.id,
+        body: `📥 New form submission received — ${name}.`,
+        mentions: "[]",
+      },
+    });
+    // Automations must never block the submitter's confirmation — if a rule
+    // errors, log it and still return success.
+    try {
+      await runAutomations({ type: "item_created", boardId, itemId: item.id });
+    } catch (e) {
+      console.error("[form:automation-error]", e);
+    }
     finalItemId = item.id;
     message = cfg.welcomeMessage?.trim() || "Thanks! Your submission was received.";
   }
 
   // Cross-board connect (Part 10): link this submission to a matching item on
-  // each connected board by email — no duplicate, just a link.
+  // each connected board by email — no duplicate, just a link. Wrapped so a
+  // linking error can never block the submitter's confirmation.
+  try {
   const emailCol = board.columns.find((c) => c.type === "email");
   const submittedEmail = emailCol
     ? values.find((v) => v.columnId === emailCol.id)?.value
@@ -219,6 +248,9 @@ async function runSubmission(boardId: string, cfg: FormCfg, formData: FormData):
         });
       }
     }
+  }
+  } catch (e) {
+    console.error("[form:connect-error]", e);
   }
 
   revalidatePath(`/boards/${boardId}`);

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
-import type { BoardData, PersonLite } from "@/lib/board-types";
+import type { BoardData, PersonLite, PermData } from "@/lib/board-types";
 import { renameBoard, archiveBoard, sortItemsByColumn } from "@/app/actions/board";
 import { TableView, type RowHeight } from "./table-view";
 import { KanbanView } from "./kanban-view";
@@ -101,6 +101,7 @@ export function BoardView({
   board,
   people,
   departments,
+  permData,
   templates,
   employers,
   views,
@@ -112,6 +113,7 @@ export function BoardView({
   board: BoardData;
   people: PersonLite[];
   departments: { id: string; name: string }[];
+  permData: PermData;
   templates: TemplateLite[];
   employers: { id: string; name: string }[];
   views: SavedView[];
@@ -398,7 +400,8 @@ export function BoardView({
                       onChange={() =>
                         setHidden((h) => {
                           const n = new Set(h);
-                          n.has(c.id) ? n.delete(c.id) : n.add(c.id);
+                          if (n.has(c.id)) n.delete(c.id);
+                          else n.add(c.id);
                           return n;
                         })
                       }
@@ -610,6 +613,7 @@ export function BoardView({
             <TableView
               board={view}
               people={people}
+              permData={permData}
               readOnly={readOnly}
               connectionOptions={connectionOptions}
               rowHeight={rowHeight}

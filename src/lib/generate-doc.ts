@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import { renderDocumentHtml, buildBlocks, type DocValue } from "@/lib/docgen";
 import type { StatusLabel } from "@/lib/constants";
+import { urlDisplay, parseFileValue } from "@/lib/cell-values";
 
 // Core document generation (no auth) — used by the manual action and by
 // automations. Fills a template from an item's data (resolving status labels,
@@ -71,6 +72,10 @@ export async function generateDocumentCore(
         : { text: "" };
     } else if (col.type === "connection") {
       values[col.name] = { text: cell.value ? linkedMap.get(cell.value)?.name ?? "" : "" };
+    } else if (col.type === "url") {
+      values[col.name] = { text: urlDisplay(cell.value) };
+    } else if (col.type === "file") {
+      values[col.name] = { text: parseFileValue(cell.value).map((f) => f.name).join(", ") };
     } else {
       values[col.name] = { text: cell.value ?? "" };
     }

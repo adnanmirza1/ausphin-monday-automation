@@ -5,6 +5,36 @@ import type { ColumnData, CellData, PersonLite } from "@/lib/board-types";
 import { setCell, setPersonCell, addStatusLabel } from "@/app/actions/board";
 import { PALETTE } from "@/lib/constants";
 import { createPortal } from "react-dom";
+import {
+  parseUrlValue,
+  urlDisplay,
+  urlHref,
+  serializeUrlValue,
+  parseFileValue,
+  type FileValue,
+} from "@/lib/cell-values";
+import { EmailComposer } from "@/components/board/email-composer";
+
+// ── Input sanitizers (Improvement #6) ────────────────────────────────
+// Numbers: digits, a single decimal point, optional leading minus. No letters.
+function sanitizeNumber(s: string): string {
+  let out = s.replace(/[^0-9.-]/g, "");
+  // keep only a leading "-"
+  const neg = out.startsWith("-");
+  out = out.replace(/-/g, "");
+  // keep only the first "."
+  const firstDot = out.indexOf(".");
+  if (firstDot !== -1) {
+    out = out.slice(0, firstDot + 1) + out.slice(firstDot + 1).replace(/\./g, "");
+  }
+  return (neg ? "-" : "") + out;
+}
+// Phones: digits and the permitted symbols + space - ( ) . No letters.
+function sanitizePhone(s: string): string {
+  return s.replace(/[^0-9+\-() .]/g, "");
+}
+// Max size for an uploaded file kept as a data URL in the DB (Improvement #7).
+const MAX_FILE_BYTES = 3 * 1024 * 1024; // 3 MB
 
 type Ctx = {
   boardId: string;
@@ -33,7 +63,9 @@ export function Cell(props: Ctx) {
     case "date":
       return <InputCell {...props} inputType="date" />;
     case "number":
-      return <InputCell {...props} inputType="number" />;
+      return (
+        <InputCell {...props} inputType="text" inputMode="decimal" sanitize={sanitizeNumber} />
+      );
     case "email":
       return <EmailCell {...props} />;
     case "phone":
@@ -308,10 +340,22 @@ function InputCell({
   cell,
   readOnly,
   inputType,
-}: Ctx & { inputType: string }) {
+  inputMode,
+  sanitize,
+}: Ctx & {
+  inputType: string;
+  inputMode?: "decimal" | "numeric" | "text";
+  sanitize?: (s: string) => string;
+}) {
   const [value, setValue] = useState(cell?.value ?? "");
+  const [seen, setSeen] = useState(cell?.value ?? "");
   const [, start] = useTransition();
-  useEffect(() => setValue(cell?.value ?? ""), [cell?.value]);
+  // Re-sync the input when the cell value changes externally (React docs:
+  // "You Might Not Need an Effect" — adjusting state when a prop changes).
+  if ((cell?.value ?? "") !== seen) {
+    setSeen(cell?.value ?? "");
+    setValue(cell?.value ?? "");
+  }
 
   function commit() {
     if ((cell?.value ?? "") === value) return;
@@ -321,9 +365,10 @@ function InputCell({
   return (
     <input
       type={inputType}
+      inputMode={inputMode}
       value={value}
       disabled={readOnly}
-      onChange={(e) => setValue(e.target.value)}
+      onChange={(e) => setValue(sanitize ? sanitize(e.target.value) : e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
       className="h-full w-full bg-transparent px-2 text-center text-xs text-body outline-none focus:bg-teal/5"
@@ -331,12 +376,18 @@ function InputCell({
   );
 }
 
-/* ── Email (click → compose in Gmail) ────────────────── */
+/* ── Email (click → compose inside the platform — #2) ── */
 function EmailCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
   const [editing, setEditing] = useState(false);
+  const [composing, setComposing] = useState(false);
   const [value, setValue] = useState(cell?.value ?? "");
+  const [seen, setSeen] = useState(cell?.value ?? "");
   const [, start] = useTransition();
-  useEffect(() => setValue(cell?.value ?? ""), [cell?.value]);
+  // Re-sync the input when the cell value changes externally.
+  if ((cell?.value ?? "") !== seen) {
+    setSeen(cell?.value ?? "");
+    setValue(cell?.value ?? "");
+  }
 
   function commit() {
     setEditing(false);
@@ -360,18 +411,15 @@ function EmailCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
       />
     );
   }
-  const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}`;
   return (
     <div className="flex h-full w-full items-center justify-center gap-1 px-1.5">
-      <a
-        href={gmail}
-        target="_blank"
-        rel="noreferrer"
-        title={`Compose email to ${email} in Gmail`}
+      <button
+        onClick={() => setComposing(true)}
+        title={`Compose email to ${email}`}
         className="truncate text-xs text-teal hover:underline"
       >
         {email}
-      </a>
+      </button>
       {!readOnly && (
         <button
           onClick={() => setEditing(true)}
@@ -380,6 +428,14 @@ function EmailCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
         >
           ✎
         </button>
+      )}
+      {composing && (
+        <EmailComposer
+          boardId={boardId}
+          itemId={itemId}
+          defaultTo={email}
+          onClose={() => setComposing(false)}
+        />
       )}
     </div>
   );
@@ -406,8 +462,13 @@ function flagForPhone(raw: string): string {
 function PhoneCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(cell?.value ?? "");
+  const [seen, setSeen] = useState(cell?.value ?? "");
   const [, start] = useTransition();
-  useEffect(() => setValue(cell?.value ?? ""), [cell?.value]);
+  // Re-sync the input when the cell value changes externally.
+  if ((cell?.value ?? "") !== seen) {
+    setSeen(cell?.value ?? "");
+    setValue(cell?.value ?? "");
+  }
 
   function commit() {
     setEditing(false);
@@ -420,10 +481,11 @@ function PhoneCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
     return (
       <input
         type="tel"
+        inputMode="tel"
         autoFocus={editing}
         value={value}
         disabled={readOnly}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => setValue(sanitizePhone(e.target.value))}
         onBlur={commit}
         onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
         placeholder={readOnly ? "" : "+61…"}
@@ -456,56 +518,114 @@ function PhoneCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
   );
 }
 
-/* ── URL / Link (click to open) ──────────────────────── */
+/* ── URL / Link (custom display name — Additional #1) ── */
 function UrlCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
+  const parsed = parseUrlValue(cell?.value);
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(cell?.value ?? "");
+  const [url, setUrl] = useState(parsed.url);
+  const [label, setLabel] = useState(parsed.label ?? "");
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [seen, setSeen] = useState<string | null>(cell?.value ?? null);
   const [, start] = useTransition();
-  useEffect(() => setValue(cell?.value ?? ""), [cell?.value]);
 
-  function commit() {
+  // Re-sync local fields when the cell value changes externally.
+  if ((cell?.value ?? null) !== seen) {
+    const p = parseUrlValue(cell?.value);
+    setSeen(cell?.value ?? null);
+    setUrl(p.url);
+    setLabel(p.label ?? "");
+  }
+
+  function save() {
     setEditing(false);
-    if ((cell?.value ?? "") !== value)
-      start(() => void setCell(boardId, itemId, column.id, value || null));
+    const next = serializeUrlValue(url, label);
+    if ((cell?.value ?? null) !== next)
+      start(() => void setCell(boardId, itemId, column.id, next));
   }
 
-  const url = cell?.value;
-  if (editing || !url) {
-    return (
-      <input
-        type="url"
-        autoFocus={editing}
-        value={value}
-        disabled={readOnly}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-        placeholder={readOnly ? "" : "https://…"}
-        className="h-full w-full bg-transparent px-2 text-center text-xs text-body outline-none focus:bg-teal/5"
-      />
-    );
-  }
-  const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
-  const label = url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+  const hasLink = !!cell?.value && !!parseUrlValue(cell?.value).url;
+
   return (
-    <div className="flex h-full w-full items-center justify-center gap-1 px-1.5">
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        title={url}
-        className="truncate text-xs text-teal hover:underline"
-      >
-        🔗 {label}
-      </a>
-      {!readOnly && (
+    <div className="relative flex h-full w-full items-center justify-center gap-1 px-1.5">
+      {hasLink ? (
+        <a
+          href={urlHref(cell?.value)}
+          target="_blank"
+          rel="noreferrer"
+          title={parseUrlValue(cell?.value).url}
+          className="truncate text-xs text-teal hover:underline"
+        >
+          🔗 {urlDisplay(cell?.value)}
+        </a>
+      ) : (
+        !readOnly && (
+          <button
+            ref={btnRef}
+            onClick={() => setEditing(true)}
+            className="text-xs text-muted hover:text-body"
+          >
+            ＋ Link
+          </button>
+        )
+      )}
+      {hasLink && !readOnly && (
         <button
+          ref={btnRef}
           onClick={() => setEditing(true)}
-          title="Edit link"
+          title="Edit link & display name"
           className="flex-none text-[10px] text-muted hover:text-body"
         >
           ✎
         </button>
+      )}
+      {editing && (
+        <FloatingPanel anchorRef={btnRef} onClose={save} width={248}>
+          <div className="flex flex-col gap-2 rounded-lg border border-hair bg-white p-2.5 shadow-pop">
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-body">URL</label>
+              <input
+                autoFocus
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && save()}
+                placeholder="https://example.com/candidate-document"
+                className="w-full rounded border border-hair px-2 py-1 text-xs outline-none focus:border-teal"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-body">
+                Display name <span className="font-normal text-muted">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && save()}
+                placeholder="Candidate Document"
+                className="w-full rounded border border-hair px-2 py-1 text-xs outline-none focus:border-teal"
+              />
+            </div>
+            <div className="flex justify-end gap-1.5">
+              {hasLink && (
+                <button
+                  onClick={() => {
+                    setUrl("");
+                    setLabel("");
+                    setEditing(false);
+                    start(() => void setCell(boardId, itemId, column.id, null));
+                  }}
+                  className="mr-auto rounded px-2 py-1 text-xs text-muted hover:text-danger"
+                >
+                  Clear
+                </button>
+              )}
+              <button onClick={save} className="rounded bg-teal px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-deep">
+                Save
+              </button>
+            </div>
+          </div>
+        </FloatingPanel>
       )}
     </div>
   );
@@ -590,22 +710,129 @@ function MirrorCell({ cell }: Ctx) {
   );
 }
 
-/* ── File (link to a generated/attached document) ───── */
-function FileCell({ cell }: Ctx) {
-  const url = cell?.value;
+/* ── File (upload + open/download — Improvement #7) ──── */
+function FileCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
+  const files = parseFileValue(cell?.value);
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [, start] = useTransition();
+
+  function persist(next: FileValue[]) {
+    const value = next.length ? JSON.stringify(next) : null;
+    start(() => void setCell(boardId, itemId, column.id, value));
+  }
+
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const chosen = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (chosen.length === 0) return;
+    setError("");
+    const tooBig = chosen.find((f) => f.size > MAX_FILE_BYTES);
+    if (tooBig) {
+      setError(`"${tooBig.name}" is over 3 MB.`);
+      return;
+    }
+    setBusy(true);
+    Promise.all(
+      chosen.map(
+        (f) =>
+          new Promise<FileValue>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () =>
+              resolve({ name: f.name, type: f.type, url: String(reader.result) });
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(f);
+          })
+      )
+    )
+      .then((added) => {
+        // Only keep real uploaded files (drop a legacy doc-link placeholder).
+        const existing = files.filter((f) => f.url.startsWith("data:"));
+        persist([...existing, ...added]);
+        setBusy(false);
+      })
+      .catch(() => {
+        setError("Could not read that file.");
+        setBusy(false);
+      });
+  }
+
+  function removeAt(idx: number) {
+    persist(files.filter((_, i) => i !== idx));
+  }
+
+  const count = files.length;
+
   return (
-    <div className="grid h-full place-items-center px-2">
-      {url ? (
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="truncate text-xs font-medium text-teal hover:underline"
-        >
-          📄 Open
-        </a>
-      ) : (
-        <span className="text-xs text-muted">—</span>
+    <div className="relative grid h-full place-items-center px-2">
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        onChange={onPick}
+        className="hidden"
+        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx,.zip"
+      />
+      <button
+        ref={btnRef}
+        disabled={readOnly}
+        onClick={() => (count > 0 ? setOpen(true) : inputRef.current?.click())}
+        className="flex h-full w-full items-center justify-center gap-1 text-xs"
+        title={count > 0 ? "View files" : readOnly ? "" : "Upload file"}
+      >
+        {busy ? (
+          <span className="text-muted">Uploading…</span>
+        ) : count > 0 ? (
+          <span className="truncate font-medium text-teal">
+            📎 {count === 1 ? files[0].name : `${count} files`}
+          </span>
+        ) : (
+          <span className="text-muted">{readOnly ? "" : "⬆ Upload"}</span>
+        )}
+      </button>
+      {error && <span className="absolute -bottom-4 text-[10px] text-danger">{error}</span>}
+      {open && (
+        <FloatingPanel anchorRef={btnRef} onClose={() => setOpen(false)} width={248}>
+          <div className="flex flex-col gap-1 rounded-lg border border-hair bg-white p-2 shadow-pop">
+            <p className="px-1 pb-1 text-[11px] font-semibold text-body">Files</p>
+            <div className="max-h-52 overflow-y-auto scroll-thin">
+              {files.map((f, i) => (
+                <div key={i} className="flex items-center gap-1.5 rounded px-1 py-1 hover:bg-canvas">
+                  <a
+                    href={f.url}
+                    download={f.url.startsWith("data:") ? f.name : undefined}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 truncate text-xs text-teal hover:underline"
+                    title={f.name}
+                  >
+                    📄 {f.name}
+                  </a>
+                  {!readOnly && (
+                    <button
+                      onClick={() => removeAt(i)}
+                      title="Remove"
+                      className="flex-none text-[10px] text-muted hover:text-danger"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {!readOnly && (
+              <button
+                onClick={() => inputRef.current?.click()}
+                className="mt-1 rounded border border-dashed border-hair px-2 py-1.5 text-xs font-medium text-teal hover:bg-teal/5"
+              >
+                ＋ Add file
+              </button>
+            )}
+          </div>
+        </FloatingPanel>
       )}
     </div>
   );

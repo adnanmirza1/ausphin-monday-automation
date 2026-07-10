@@ -2,7 +2,15 @@
 
 import { createContext, useContext, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
-import type { BoardData, ColumnData, GroupData, ItemData, PersonLite } from "@/lib/board-types";
+import type {
+  BoardData,
+  ColumnData,
+  GroupData,
+  ItemData,
+  PersonLite,
+  PermData,
+  CustomEdit,
+} from "@/lib/board-types";
 import {
   COLUMN_TYPE_META,
   COLUMN_TYPES,
@@ -74,6 +82,7 @@ function tintFor(board: BoardData, item: ItemData, colorBy: string | null) {
 export function TableView({
   board,
   people,
+  permData,
   readOnly,
   connectionOptions = {},
   rowHeight = "default",
@@ -82,6 +91,7 @@ export function TableView({
 }: {
   board: BoardData;
   people: PersonLite[];
+  permData: PermData;
   readOnly: boolean;
   connectionOptions?: ConnOpts;
   rowHeight?: RowHeight;
@@ -92,7 +102,8 @@ export function TableView({
   const toggle = (id: string) =>
     setSelected((s) => {
       const n = new Set(s);
-      n.has(id) ? n.delete(id) : n.add(id);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
       return n;
     });
   const setMany = (ids: string[], on: boolean) =>
@@ -113,6 +124,7 @@ export function TableView({
             board={board}
             group={g}
             people={people}
+            permData={permData}
             readOnly={readOnly}
             connectionOptions={connectionOptions}
             rowHeight={rowHeight}
@@ -207,6 +219,7 @@ function GroupBlock({
   board,
   group,
   people,
+  permData,
   readOnly,
   connectionOptions,
   rowHeight,
@@ -216,6 +229,7 @@ function GroupBlock({
   board: BoardData;
   group: GroupData;
   people: PersonLite[];
+  permData: PermData;
   readOnly: boolean;
   connectionOptions: ConnOpts;
   rowHeight: RowHeight;
@@ -365,7 +379,7 @@ function GroupBlock({
           </div>
           {board.columns.map((c) => (
             <div key={c.id} style={{ width: COL_W }} className="border-l border-hair">
-              <ColumnHeader boardId={board.id} column={c} readOnly={readOnly} />
+              <ColumnHeader boardId={board.id} column={c} permData={permData} readOnly={readOnly} />
             </div>
           ))}
         </div>
@@ -555,14 +569,16 @@ const ADD_RIGHT_TYPES = COLUMN_TYPES.filter(
 function ColumnHeader({
   boardId,
   column,
+  permData,
   readOnly,
 }: {
   boardId: string;
   column: ColumnData;
+  permData: PermData;
   readOnly: boolean;
 }) {
   const [menu, setMenu] = useState(false);
-  const [sub, setSub] = useState<"main" | "addRight">("main");
+  const [sub, setSub] = useState<"main" | "addRight" | "custom">("main");
   const [renaming, setRenaming] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [descOpen, setDescOpen] = useState(false);
@@ -727,6 +743,15 @@ function ColumnHeader({
                     <span>🔒 Admins only</span>
                     {column.editPolicy === "admins" && <span className="text-teal">✓</span>}
                   </button>
+                  <button
+                    onClick={() => setSub("custom")}
+                    className={`${menuItem} flex items-center justify-between`}
+                  >
+                    <span>👥 Custom…</span>
+                    {!!column.editPolicy &&
+                      column.editPolicy !== "all" &&
+                      column.editPolicy !== "admins" && <span className="text-teal">✓</span>}
+                  </button>
 
                   <Divider />
                   <button
@@ -741,7 +766,7 @@ function ColumnHeader({
                     🗑 Delete
                   </button>
                 </>
-              ) : (
+              ) : sub === "addRight" ? (
                 <>
                   <button
                     onClick={() => setSub("main")}
@@ -775,6 +800,14 @@ function ColumnHeader({
                     ))}
                   </div>
                 </>
+              ) : (
+                <CustomPermPanel
+                  boardId={boardId}
+                  column={column}
+                  permData={permData}
+                  onBack={() => setSub("main")}
+                  onSaved={closeMenu}
+                />
               )}
             </div>
           </>,
@@ -801,6 +834,163 @@ function ColumnHeader({
         <DefaultValueEditor column={column} boardId={boardId} onClose={() => setDefaultOpen(false)} />
       )}
     </div>
+  );
+}
+
+// "Custom" column-edit permission (Improvement #1) — pick any roles /
+// departments / users who may edit this column's cells (admins always may).
+function CustomPermPanel({
+  boardId,
+  column,
+  permData,
+  onBack,
+  onSaved,
+}: {
+  boardId: string;
+  column: ColumnData;
+  permData: PermData;
+  onBack: () => void;
+  onSaved: () => void;
+}) {
+  const initial: CustomEdit = (() => {
+    const p = column.editPolicy;
+    if (Array.isArray(p)) return { roles: p, departments: [], users: [] }; // legacy
+    if (p && typeof p === "object")
+      return {
+        roles: p.roles ?? [],
+        departments: p.departments ?? [],
+        users: p.users ?? [],
+      };
+    return { roles: [], departments: [], users: [] };
+  })();
+
+  const [roles, setRoles] = useState<string[]>(initial.roles);
+  const [departments, setDepartments] = useState<string[]>(initial.departments);
+  const [users, setUsers] = useState<string[]>(initial.users);
+  const [q, setQ] = useState("");
+  const [, start] = useTransition();
+
+  const toggle = (
+    id: string,
+    list: string[],
+    setter: (v: string[]) => void
+  ) => setter(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+
+  function save() {
+    start(() =>
+      void setColumnPermission(boardId, column.id, { roles, departments, users })
+    );
+    onSaved();
+  }
+
+  const total = roles.length + departments.length + users.length;
+
+  // Type-to-find across roles / teams / people (Improvement #1).
+  const needle = q.trim().toLowerCase();
+  const match = (name: string) => !needle || name.toLowerCase().includes(needle);
+  const fRoles = permData.roles.filter((r) => match(r.name));
+  const fDepts = permData.departments.filter((d) => match(d.name));
+  const fPeople = permData.people.filter((u) => match(u.name));
+  const nothing = fRoles.length + fDepts.length + fPeople.length === 0;
+
+  return (
+    <>
+      <button onClick={onBack} className={`${menuItem} flex items-center gap-1 text-muted`}>
+        ‹ Who can edit
+      </button>
+      <Divider />
+      <div className="px-1 pb-1">
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search roles, teams, people…"
+          className="w-full rounded border border-hair px-2 py-1 text-xs outline-none focus:border-teal"
+        />
+      </div>
+      <div className="max-h-72 overflow-y-auto scroll-thin px-1">
+        {fRoles.length > 0 && (
+          <p className="px-1 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">
+            Roles
+          </p>
+        )}
+        {fRoles.map((r) => (
+          <PermCheck
+            key={r.id}
+            label={r.name}
+            checked={roles.includes(r.id)}
+            onToggle={() => toggle(r.id, roles, setRoles)}
+          />
+        ))}
+        {fDepts.length > 0 && (
+          <p className="px-1 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted/70">
+            Teams / Departments
+          </p>
+        )}
+        {fDepts.map((d) => (
+          <PermCheck
+            key={d.id}
+            label={d.name}
+            checked={departments.includes(d.id)}
+            onToggle={() => toggle(d.id, departments, setDepartments)}
+          />
+        ))}
+        {fPeople.length > 0 && (
+          <p className="px-1 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted/70">
+            People
+          </p>
+        )}
+        {fPeople.map((u) => (
+          <PermCheck
+            key={u.id}
+            label={u.name}
+            checked={users.includes(u.id)}
+            onToggle={() => toggle(u.id, users, setUsers)}
+          />
+        ))}
+        {nothing && (
+          <p className="px-2 py-3 text-center text-xs text-muted">No matches for “{q.trim()}”</p>
+        )}
+      </div>
+      <Divider />
+      <div className="flex items-center justify-between px-1 py-1">
+        <span className="text-[11px] text-muted">
+          {total === 0 ? "Anyone (none selected)" : `${total} selected`}
+        </span>
+        <button
+          onClick={save}
+          className="rounded-md bg-teal px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-deep"
+        >
+          Save
+        </button>
+      </div>
+    </>
+  );
+}
+
+function PermCheck({
+  label,
+  checked,
+  onToggle,
+}: {
+  label: string;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      className={`${menuItem} flex items-center justify-between`}
+    >
+      <span className="truncate">{label}</span>
+      <span
+        className={`grid h-4 w-4 flex-none place-items-center rounded border text-[10px] ${
+          checked ? "border-teal bg-teal text-white" : "border-hair text-transparent"
+        }`}
+      >
+        ✓
+      </span>
+    </button>
   );
 }
 

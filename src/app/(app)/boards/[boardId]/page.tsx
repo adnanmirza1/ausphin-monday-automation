@@ -29,6 +29,11 @@ export default async function BoardPage({
     orderBy: { name: "asc" },
     select: { id: true, name: true },
   });
+  const roles = await db.role.findMany({
+    where: { orgId: user.orgId },
+    orderBy: { rank: "asc" },
+    select: { id: true, name: true },
+  });
   const templates = await db.docTemplate.findMany({
     where: { boardId: board.id },
     orderBy: { createdAt: "asc" },
@@ -238,6 +243,7 @@ export default async function BoardPage({
       board={data}
       people={people}
       departments={departments}
+      permData={{ roles, departments, people }}
       templates={templates}
       employers={employers}
       views={views}

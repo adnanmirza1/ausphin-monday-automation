@@ -7,6 +7,21 @@ export type PersonLite = {
   avatarColor: string;
 };
 
+// Who can edit a column's cells (Improvement #1).
+//   "all"      → anyone (default)
+//   "admins"   → admins only
+//   string[]   → legacy: a list of role ids
+//   CustomEdit → any of the listed roles / departments / users
+export type CustomEdit = { roles: string[]; departments: string[]; users: string[] };
+export type EditPolicy = "all" | "admins" | string[] | CustomEdit;
+
+// Options offered by the "Custom" column-permission picker.
+export type PermData = {
+  roles: { id: string; name: string }[];
+  departments: { id: string; name: string }[];
+  people: PersonLite[];
+};
+
 export type ColumnData = {
   id: string;
   name: string;
@@ -16,7 +31,7 @@ export type ColumnData = {
   required?: boolean; // marks the column as required (red * on header)
   defaultValue?: string; // value applied to this column on new items
   editable?: boolean; // false → current user may not edit this column's cells
-  editPolicy?: "all" | "admins" | string[]; // who may edit (roleIds list)
+  editPolicy?: EditPolicy; // who may edit
   // connection: targetBoardId · mirror: connectionColumnId + sourceColumnId
   targetBoardId?: string;
   connectionColumnId?: string;

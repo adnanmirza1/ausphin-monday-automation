@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import type { StatusLabel } from "@/lib/constants";
 import {
   createAutomation,
@@ -224,6 +224,9 @@ function describe(
 
   return { when, then };
 }
+// Parse persisted trigger/action JSON. The shape is intentionally freeform
+// (many rule variants), so callers read known optional fields off the result.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function safe(s: string): any {
   try {
     return JSON.parse(s);
@@ -407,6 +410,36 @@ function CreateModal({
   const tColObj = statusCols.find((c) => c.id === tCol);
   const aStatusColObj = statusCols.find((c) => c.id === aStatusCol);
 
+  // Placeholder insertion for the send-email builder (Additional #2). Tokens map
+  // to board column names ({{Item}} = item name); the engine fills them at send.
+  const subjectRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const [focusField, setFocusField] = useState<"subject" | "body">("body");
+
+  function insertPlaceholder(token: string) {
+    const wrapped = `{{${token}}}`;
+    const isSubject = focusField === "subject";
+    const el = isSubject ? subjectRef.current : bodyRef.current;
+    const cur = isSubject ? aSubject : aBody;
+    const setter = isSubject ? setASubject : setABody;
+    const startPos = el?.selectionStart ?? cur.length;
+    const endPos = el?.selectionEnd ?? cur.length;
+    const next = cur.slice(0, startPos) + wrapped + cur.slice(endPos);
+    setter(next);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      const pos = startPos + wrapped.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }
+
+  // Distinct placeholders offered: the item name + every board column.
+  const placeholderTokens = [
+    "Item",
+    ...allColumns.map((c) => c.name).filter((n, i, arr) => arr.indexOf(n) === i),
+  ];
+
   function build() {
     let trigger: Record<string, unknown>;
     switch (tType) {
@@ -489,7 +522,7 @@ function CreateModal({
             <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-teal-deep">
               When
             </p>
-            <select value={tType} onChange={(e) => setTType(e.target.value as any)} className={inp}>
+            <select value={tType} onChange={(e) => setTType(e.target.value as typeof tType)} className={inp}>
               <option value="status_changes">A status changes</option>
               <option value="item_created">An item is created</option>
               <option value="column_changes">A column changes</option>
@@ -547,7 +580,7 @@ function CreateModal({
             <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-amber">
               Then
             </p>
-            <select value={aType} onChange={(e) => setAType(e.target.value as any)} className={inp}>
+            <select value={aType} onChange={(e) => setAType(e.target.value as typeof aType)} className={inp}>
               <option value="move_to_group">Move item to group</option>
               <option value="set_status">Set a status</option>
               <option value="notify">Notify a department</option>
@@ -642,14 +675,43 @@ function CreateModal({
                     <option key={c.id} value={c.id}>Send to: {c.name}</option>
                   ))}
                 </select>
-                <input value={aSubject} onChange={(e) => setASubject(e.target.value)} placeholder="Subject — e.g. Welcome {{Item}}!" className={inp} />
+                <input
+                  ref={subjectRef}
+                  value={aSubject}
+                  onChange={(e) => setASubject(e.target.value)}
+                  onFocus={() => setFocusField("subject")}
+                  placeholder="Subject — e.g. Welcome {{Item}}!"
+                  className={inp}
+                />
                 <textarea
+                  ref={bodyRef}
                   value={aBody}
                   onChange={(e) => setABody(e.target.value)}
+                  onFocus={() => setFocusField("body")}
                   rows={4}
-                  placeholder={"Body — use {{Item}}, {{Program}}, {{Email}}…\n\nHi {{Item}},\nThank you for registering."}
+                  placeholder={"Body — use the chips below to insert live data.\n\nHi {{Item}},\nThank you for registering."}
                   className={`${inp} resize-y`}
                 />
+                {/* Insert-placeholder chips (Additional #2) */}
+                <div>
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                    Insert data into {focusField === "subject" ? "subject" : "body"}
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {placeholderTokens.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => insertPlaceholder(t)}
+                        className="rounded-full border border-hair px-2 py-0.5 text-[11px] font-medium text-teal hover:border-teal hover:bg-teal/5"
+                        title={`Insert {{${t}}}`}
+                      >
+                        + {t === "Item" ? "Item name" : t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 {/* Live preview */}
                 <div className="rounded-lg border border-hair bg-white p-2.5">
                   <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Preview (sample data)</p>

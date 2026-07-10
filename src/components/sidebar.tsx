@@ -102,11 +102,11 @@ export function Sidebar({
             <div className="group flex items-center rounded-md pr-1 hover:bg-rail-hover">
               <button
                 onClick={() => setOpen((o) => ({ ...o, [env.id]: !o[env.id] }))}
-                className="flex flex-1 items-center gap-2 px-2 py-1.5 text-sm font-medium"
+                className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-sm font-medium"
               >
                 <span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: env.color }} />
-                <span className="flex-1 truncate text-left">{env.name}</span>
-                <span className="text-xs text-white/40">{open[env.id] ? "▾" : "▸"}</span>
+                <span className="min-w-0 flex-1 truncate text-left">{env.name}</span>
+                <span className="flex-none text-xs text-white/40">{open[env.id] ? "▾" : "▸"}</span>
               </button>
               {user.canManageEnvironments && <EnvMenu env={env} />}
             </div>
@@ -266,10 +266,12 @@ function EnvMenu({ env }: { env: NavEnv }) {
   }
 
   return (
-    <div className="relative">
+    <div className="relative flex-none">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="hidden h-6 w-6 place-items-center rounded text-white/40 hover:bg-rail-hover hover:text-white group-hover:grid"
+        className={`h-6 w-6 flex-none place-items-center rounded text-white/40 hover:bg-rail-hover hover:text-white ${
+          open ? "grid" : "hidden group-hover:grid"
+        }`}
         title="Manage workspace"
       >
         ⋯

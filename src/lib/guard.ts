@@ -30,7 +30,21 @@ export function canEditColumn(user: CurrentUser, config: string): boolean {
   }
   if (edit === undefined || edit === null || edit === "all") return true;
   if (edit === "admins") return isAdmin;
-  if (Array.isArray(edit)) return isAdmin || (user.roleId != null && edit.includes(user.roleId));
+  if (isAdmin) return true;
+  // Legacy shape: a plain array of role ids.
+  if (Array.isArray(edit)) return user.roleId != null && edit.includes(user.roleId);
+  // Custom shape: match on role, department, or explicit user (Improvement #1).
+  if (typeof edit === "object") {
+    const e = edit as { roles?: string[]; departments?: string[]; users?: string[] };
+    const roles = Array.isArray(e.roles) ? e.roles : [];
+    const departments = Array.isArray(e.departments) ? e.departments : [];
+    const users = Array.isArray(e.users) ? e.users : [];
+    return (
+      (user.roleId != null && roles.includes(user.roleId)) ||
+      (user.departmentId != null && departments.includes(user.departmentId)) ||
+      users.includes(user.id)
+    );
+  }
   return true;
 }
 

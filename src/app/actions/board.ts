@@ -231,14 +231,30 @@ export async function setPersonCell(
   touch(boardId);
 }
 
-// Set who may edit a column's cells: "all" | "admins" | roleIds[].
+// Set who may edit a column's cells (Improvement #1):
+//   "all" | "admins" | { roles, departments, users }
 export async function setColumnPermission(
   boardId: string,
   columnId: string,
-  edit: "all" | "admins" | string[]
+  edit:
+    | "all"
+    | "admins"
+    | { roles: string[]; departments: string[]; users: string[] }
 ) {
   await requireEditor();
-  await patchColumnConfig(columnId, { edit: edit === "all" ? undefined : edit });
+  let value: unknown;
+  if (edit === "all") value = undefined;
+  else if (edit === "admins") value = "admins";
+  else {
+    const clean = {
+      roles: edit.roles ?? [],
+      departments: edit.departments ?? [],
+      users: edit.users ?? [],
+    };
+    const empty = !clean.roles.length && !clean.departments.length && !clean.users.length;
+    value = empty ? undefined : clean;
+  }
+  await patchColumnConfig(columnId, { edit: value });
   touch(boardId);
 }
 

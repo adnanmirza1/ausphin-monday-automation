@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import { generateDocumentCore } from "@/lib/generate-doc";
 import { sendMail } from "@/lib/mailer";
+import { urlDisplay, parseFileValue } from "@/lib/cell-values";
 
 // Events emitted by board mutations.
 export type AutomationEvent =
@@ -70,6 +71,8 @@ async function renderTemplate(itemId: string, text: string): Promise<string> {
         v = (JSON.parse(c.column.config).labels ?? []).find((l: { id: string }) => l.id === c.value)?.label ?? "";
       } catch {}
     } else if (c.column.type === "person") v = c.person?.name ?? "";
+    else if (c.column.type === "url") v = urlDisplay(c.value);
+    else if (c.column.type === "file") v = parseFileValue(c.value).map((f) => f.name).join(", ");
     map[c.column.name.toLowerCase()] = v;
   }
   return text.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, k) => map[String(k).toLowerCase()] ?? "");
@@ -184,7 +187,10 @@ async function execute(action: Action, event: AutomationEvent) {
     case "send_email": {
       const it = await db.item.findUnique({
         where: { id: itemId },
-        include: { cells: { include: { column: true } } },
+        include: {
+          cells: { include: { column: true } },
+          board: { include: { environment: true } },
+        },
       });
       if (!it) break;
       // Recipient = chosen email column, else the first email column on the item.
@@ -195,7 +201,11 @@ async function execute(action: Action, event: AutomationEvent) {
       const subject = await renderTemplate(itemId, action.subject || "");
       const body = await renderTemplate(itemId, action.body || "");
       if (to) {
-        await sendMail({ to, subject: subject || "(no subject)", html: `<p>${body.replace(/\n/g, "<br/>")}</p>` });
+        await sendMail({
+          to,
+          subject: subject || "(no subject)",
+          html: `<p>${body.replace(/\n/g, "<br/>")}</p>`,
+        });
       }
       // Record what was sent on the item's timeline (so it's visible even in dev).
       await db.update.create({
@@ -205,6 +215,21 @@ async function execute(action: Action, event: AutomationEvent) {
           mentions: "[]",
         },
       });
+      // Record on the item's email conversation history (Missing #2).
+      if (to) {
+        await db.emailMessage.create({
+          data: {
+            orgId: it.board.environment.orgId,
+            itemId,
+            direction: "outbound",
+            status: "sent",
+            fromEmail: process.env.SMTP_FROM || "",
+            toEmail: to,
+            subject,
+            body,
+          },
+        });
+      }
       break;
     }
 

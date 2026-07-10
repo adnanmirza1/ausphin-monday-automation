@@ -25,6 +25,7 @@ model Organization {
   invitations  Invitation[]
   invoices     Invoice[]
   employers    Employer[]
+  emails       EmailMessage[]
 }
 
 // Roles hold a JSON permission set. isSystem roles (Admin/Member/Viewer/Developer)
@@ -80,6 +81,7 @@ model User {
   assignedCells  Cell[] // person-column assignments referencing this user
   updates        Update[]
   invitesCreated Invitation[]
+  emailsSent     EmailMessage[]
 }
 
 model Session {
@@ -208,6 +210,7 @@ model Item {
   updates     Update[]
   documents   GeneratedDocument[]
   employerTags CandidateTag[]
+  emails      EmailMessage[]
 
   @@index([boardId])
   @@index([groupId])
@@ -368,6 +371,31 @@ model Invoice {
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
+  @@index([orgId])
+}
+
+// Email conversation history (Missing #2). Every email sent from the platform
+// to a candidate/user is recorded here, plus manual log entries and (later)
+// inbound replies — so the whole thread is visible on the item's profile.
+// direction: outbound | inbound | note   ·   status: sent | skipped | failed
+model EmailMessage {
+  id        String   @id @default(cuid())
+  orgId     String
+  itemId    String? // linked candidate/item, when the email relates to one
+  direction String   @default("outbound")
+  status    String   @default("sent")
+  fromEmail String   @default("")
+  toEmail   String   @default("")
+  subject   String   @default("")
+  body      String   @default("")
+  authorId  String? // team member who sent/logged it
+  createdAt DateTime @default(now())
+
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  item   Item?        @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  author User?        @relation(fields: [authorId], references: [id])
+
+  @@index([itemId])
   @@index([orgId])
 }
 

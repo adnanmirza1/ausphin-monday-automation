@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import type { BoardData } from "@/lib/board-types";
 import { importItems } from "@/app/actions/board";
+import { urlDisplay, parseFileValue } from "@/lib/cell-values";
 
 // Resolve a cell to a plain string for export.
 function cellText(board: BoardData, colId: string, item: BoardData["groups"][number]["items"][number]): string {
@@ -12,12 +13,22 @@ function cellText(board: BoardData, colId: string, item: BoardData["groups"][num
   if (col.type === "status") return col.labels.find((l) => l.id === cell.value)?.label ?? "";
   if (col.type === "person") return cell.person?.name ?? "";
   if (col.type === "connection" || col.type === "mirror") return cell.display ?? "";
+  if (col.type === "url") return urlDisplay(cell.value);
+  if (col.type === "file") return parseFileValue(cell.value).map((f) => f.name).join(", ");
   return cell.value ?? "";
 }
 
 function csvEscape(v: string): string {
   if (/[",\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
   return v;
+}
+
+function htmlEscape(v: string): string {
+  return v
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 // Minimal CSV parser (handles quoted fields, commas, newlines, "" escapes).
@@ -68,11 +79,46 @@ export function ImportExportButton({ board }: { board: BoardData }) {
         lines.push([it.name, ...cols].map(csvEscape).join(","));
       }
     }
-    const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    download(
+      new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8;" }),
+      `${board.name.replace(/[^\w]+/g, "-")}.csv`
+    );
+  }
+
+  // Export ALL board data to Excel (.xls). Includes the group of every row so
+  // the full board is captured. Opens in Excel and Google Sheets.
+  function exportExcel() {
+    setMenu(false);
+    const headers = ["Group", "Name", ...board.columns.map((c) => c.name)];
+    const head = `<tr>${headers.map((h) => `<th>${htmlEscape(h)}</th>`).join("")}</tr>`;
+    const body: string[] = [];
+    for (const g of board.groups) {
+      for (const it of g.items) {
+        const cells = [g.name, it.name, ...board.columns.map((c) => cellText(board, c.id, it))];
+        body.push(`<tr>${cells.map((v) => `<td>${htmlEscape(v)}</td>`).join("")}</tr>`);
+      }
+    }
+    const table = `<table border="1"><thead>${head}</thead><tbody>${body.join("")}</tbody></table>`;
+    const html =
+      `<html xmlns:o="urn:schemas-microsoft-com:office:office" ` +
+      `xmlns:x="urn:schemas-microsoft-com:office:excel" ` +
+      `xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8">` +
+      `<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>` +
+      `<x:Name>${htmlEscape(board.name).slice(0, 31)}</x:Name>` +
+      `<x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>` +
+      `</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->` +
+      `</head><body>${table}</body></html>`;
+    download(
+      new Blob(["﻿" + html], { type: "application/vnd.ms-excel;charset=utf-8;" }),
+      `${board.name.replace(/[^\w]+/g, "-")}.xls`
+    );
+  }
+
+  function download(blob: Blob, filename: string) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${board.name.replace(/[^\w]+/g, "-")}.csv`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -90,6 +136,9 @@ export function ImportExportButton({ board }: { board: BoardData }) {
           <>
             <div className="fixed inset-0 z-40" onClick={() => setMenu(false)} />
             <div className="absolute right-0 z-50 mt-1 w-44 rounded-lg border border-hair bg-white p-1 shadow-pop">
+              <button onClick={exportExcel} className="block w-full rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas">
+                ⬇ Export all data (Excel)
+              </button>
               <button onClick={exportCsv} className="block w-full rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas">
                 ⬇ Export to CSV
               </button>
