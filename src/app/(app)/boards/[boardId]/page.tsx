@@ -12,42 +12,111 @@ export default async function BoardPage({
 }: {
   params: Promise<{ boardId: string }>;
 }) {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-
   const { boardId } = await params;
-  const board = await getBoard(boardId);
+  // getBoard does not depend on the user, so fetch both in parallel.
+  const [user, board] = await Promise.all([getCurrentUser(), getBoard(boardId)]);
+  if (!user) redirect("/login");
   if (!board || board.environment.orgId !== user.orgId) notFound();
 
   // Per-role board access enforcement.
   const allowed = allowedBoardIds(user);
   if (allowed && !allowed.includes(boardId)) notFound();
 
-  const people = await getOrgPeople(user.orgId);
-  const departments = await db.department.findMany({
-    where: { orgId: user.orgId },
-    orderBy: { name: "asc" },
-    select: { id: true, name: true },
-  });
-  const roles = await db.role.findMany({
-    where: { orgId: user.orgId },
-    orderBy: { rank: "asc" },
-    select: { id: true, name: true },
-  });
-  const templates = await db.docTemplate.findMany({
-    where: { boardId: board.id },
-    orderBy: { createdAt: "asc" },
-    select: { id: true, name: true, body: true },
-  });
-  const employers = await db.employer.findMany({
-    where: { orgId: user.orgId },
-    orderBy: { name: "asc" },
-    select: { id: true, name: true },
-  });
-  const viewRows = await db.boardView.findMany({
-    where: { boardId: board.id },
-    orderBy: { position: "asc" },
-  });
+  // Everything below only needs `user` + `board` (both resolved above), so the
+  // remaining queries have no ordering dependency on each other. Firing them in
+  // a single Promise.all collapses ~11 sequential DB round-trips into one wave —
+  // a big win against a remote (Neon/us-east-1) database at ~240ms per trip.
+
+  // Config parser + connection wiring, computed synchronously from `board` so we
+  // can build the linked-item and connection-option queries into the same wave.
+  const cfgOf = (raw: string) => {
+    try {
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  };
+  const colById = new Map(board.columns.map((c) => [c.id, c]));
+
+  // Collect linked item ids from connection cells so we can fetch them in-wave.
+  const linkedIds = new Set<string>();
+  for (const g of board.groups)
+    for (const it of g.items)
+      for (const cell of it.cells)
+        if (colById.get(cell.columnId)?.type === "connection" && cell.value)
+          linkedIds.add(cell.value);
+
+  // Connection pickers: one item list per connection column's target board.
+  const connectionCols = board.columns.filter((c) => c.type === "connection");
+  const connTargets = connectionCols
+    .map((c) => ({ colId: c.id, tb: (cfgOf(c.config).targetBoardId as string) ?? "" }))
+    .filter((x) => x.tb);
+
+  const [
+    people,
+    departments,
+    roles,
+    templates,
+    employers,
+    viewRows,
+    linkedItems,
+    orgBoards,
+    connOptionEntries,
+  ] = await Promise.all([
+    getOrgPeople(user.orgId),
+    db.department.findMany({
+      where: { orgId: user.orgId },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
+    db.role.findMany({
+      where: { orgId: user.orgId },
+      orderBy: { rank: "asc" },
+      select: { id: true, name: true },
+    }),
+    db.docTemplate.findMany({
+      where: { boardId: board.id },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, name: true, body: true },
+    }),
+    db.employer.findMany({
+      where: { orgId: user.orgId },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
+    db.boardView.findMany({
+      where: { boardId: board.id },
+      orderBy: { position: "asc" },
+    }),
+    db.item.findMany({
+      where: { id: { in: [...linkedIds] } },
+      include: { cells: { include: { person: true } }, board: { include: { columns: true } } },
+    }),
+    db.board.findMany({
+      where: {
+        environment: { orgId: user.orgId },
+        ...(allowed ? { id: { in: allowed } } : {}),
+      },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        columns: { select: { id: true, name: true, type: true }, orderBy: { position: "asc" } },
+      },
+    }),
+    Promise.all(
+      connTargets.map((x) =>
+        db.item
+          .findMany({
+            where: { boardId: x.tb },
+            select: { id: true, name: true },
+            orderBy: { name: "asc" },
+          })
+          .then((items) => [x.colId, items] as const),
+      ),
+    ),
+  ]);
+
   const views = viewRows.map((v) => {
     let config = { hiddenColumns: [] as string[], filters: [] as { columnId: string; value: string }[] };
     try {
@@ -61,13 +130,6 @@ export default async function BoardPage({
   });
 
   // Parse column configs (status labels + connection/mirror wiring).
-  const cfgOf = (raw: string) => {
-    try {
-      return JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      return {};
-    }
-  };
   const columns: ColumnData[] = board.columns.map((c) => {
     const cfg = cfgOf(c.config);
     return {
@@ -84,21 +146,6 @@ export default async function BoardPage({
       editable: canEditColumn(user, c.config),
       editPolicy: (cfg.edit as "all" | "admins" | string[]) ?? "all",
     };
-  });
-  const colById = new Map(board.columns.map((c) => [c.id, c]));
-
-  // Collect linked item ids from connection cells, then fetch those items
-  // (with their board's columns) to resolve names + mirrored values.
-  const linkedIds = new Set<string>();
-  for (const g of board.groups)
-    for (const it of g.items)
-      for (const cell of it.cells)
-        if (colById.get(cell.columnId)?.type === "connection" && cell.value)
-          linkedIds.add(cell.value);
-
-  const linkedItems = await db.item.findMany({
-    where: { id: { in: [...linkedIds] } },
-    include: { cells: { include: { person: true } }, board: { include: { columns: true } } },
   });
   const linkedMap = new Map(linkedItems.map((li) => [li.id, li]));
 
@@ -121,31 +168,10 @@ export default async function BoardPage({
     return v;
   }
 
-  // Options for connection pickers + boards/columns for the add-column UI.
-  const connectionCols = board.columns.filter((c) => c.type === "connection");
-  const connectionOptions: Record<string, { id: string; name: string }[]> = {};
-  for (const c of connectionCols) {
-    const tb = (cfgOf(c.config).targetBoardId as string) ?? "";
-    if (tb) {
-      connectionOptions[c.id] = await db.item.findMany({
-        where: { boardId: tb },
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
-      });
-    }
-  }
-  const orgBoards = await db.board.findMany({
-    where: {
-      environment: { orgId: user.orgId },
-      ...(allowed ? { id: { in: allowed } } : {}),
-    },
-    orderBy: { name: "asc" },
-    select: {
-      id: true,
-      name: true,
-      columns: { select: { id: true, name: true, type: true }, orderBy: { position: "asc" } },
-    },
-  });
+  // Options for connection pickers + boards/columns for the add-column UI
+  // (both fetched in the Promise.all wave above).
+  const connectionOptions: Record<string, { id: string; name: string }[]> =
+    Object.fromEntries(connOptionEntries);
   const allBoards = orgBoards.map((b) => ({ id: b.id, name: b.name }));
   const boardColumnsMap: Record<string, { id: string; name: string; type: string }[]> =
     Object.fromEntries(orgBoards.map((b) => [b.id, b.columns]));

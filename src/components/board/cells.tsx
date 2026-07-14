@@ -441,22 +441,28 @@ function EmailCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
   );
 }
 
-/* ── Phone (shows country flag by dialing code) ──────── */
-// Longest dial codes first so "+971" matches before "+9".
-const DIAL_FLAGS: [string, string][] = [
-  ["+880", "🇧🇩"], ["+971", "🇦🇪"], ["+974", "🇶🇦"], ["+968", "🇴🇲"], ["+973", "🇧🇭"],
-  ["+965", "🇰🇼"], ["+966", "🇸🇦"], ["+234", "🇳🇬"], ["+254", "🇰🇪"], ["+63", "🇵🇭"],
-  ["+61", "🇦🇺"], ["+64", "🇳🇿"], ["+65", "🇸🇬"], ["+60", "🇲🇾"], ["+62", "🇮🇩"],
-  ["+66", "🇹🇭"], ["+84", "🇻🇳"], ["+91", "🇮🇳"], ["+92", "🇵🇰"], ["+86", "🇨🇳"],
-  ["+81", "🇯🇵"], ["+82", "🇰🇷"], ["+44", "🇬🇧"], ["+49", "🇩🇪"], ["+33", "🇫🇷"],
-  ["+39", "🇮🇹"], ["+34", "🇪🇸"], ["+90", "🇹🇷"], ["+55", "🇧🇷"], ["+52", "🇲🇽"],
-  ["+27", "🇿🇦"], ["+20", "🇪🇬"], ["+7", "🇷🇺"], ["+1", "🇺🇸"],
+/* ── Phone (shows country flag + name by dialing code) ── */
+// [dial code, flag, country name] — longest codes first so "+971" beats "+9".
+const DIAL_COUNTRIES: [string, string, string][] = [
+  ["+880", "🇧🇩", "Bangladesh"], ["+971", "🇦🇪", "United Arab Emirates"], ["+974", "🇶🇦", "Qatar"],
+  ["+968", "🇴🇲", "Oman"], ["+973", "🇧🇭", "Bahrain"], ["+965", "🇰🇼", "Kuwait"],
+  ["+966", "🇸🇦", "Saudi Arabia"], ["+234", "🇳🇬", "Nigeria"], ["+254", "🇰🇪", "Kenya"],
+  ["+63", "🇵🇭", "Philippines"], ["+61", "🇦🇺", "Australia"], ["+64", "🇳🇿", "New Zealand"],
+  ["+65", "🇸🇬", "Singapore"], ["+60", "🇲🇾", "Malaysia"], ["+62", "🇮🇩", "Indonesia"],
+  ["+66", "🇹🇭", "Thailand"], ["+84", "🇻🇳", "Vietnam"], ["+91", "🇮🇳", "India"],
+  ["+92", "🇵🇰", "Pakistan"], ["+86", "🇨🇳", "China"], ["+81", "🇯🇵", "Japan"],
+  ["+82", "🇰🇷", "South Korea"], ["+44", "🇬🇧", "United Kingdom"], ["+49", "🇩🇪", "Germany"],
+  ["+33", "🇫🇷", "France"], ["+39", "🇮🇹", "Italy"], ["+34", "🇪🇸", "Spain"],
+  ["+90", "🇹🇷", "Turkey"], ["+55", "🇧🇷", "Brazil"], ["+52", "🇲🇽", "Mexico"],
+  ["+27", "🇿🇦", "South Africa"], ["+20", "🇪🇬", "Egypt"], ["+7", "🇷🇺", "Russia"],
+  ["+1", "🇺🇸", "United States"],
 ];
-function flagForPhone(raw: string): string {
+function countryForPhone(raw: string): { flag: string; name: string } {
   const p = raw.replace(/[^\d+]/g, "");
-  if (!p.startsWith("+")) return "🌐";
-  for (const [code, flag] of DIAL_FLAGS) if (p.startsWith(code)) return flag;
-  return "🌐";
+  if (p.startsWith("+"))
+    for (const [code, flag, name] of DIAL_COUNTRIES)
+      if (p.startsWith(code)) return { flag, name };
+  return { flag: "🌐", name: "Unknown" };
 }
 
 function PhoneCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
@@ -493,18 +499,24 @@ function PhoneCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
       />
     );
   }
+  const country = countryForPhone(phone);
   return (
-    <div className="flex h-full w-full items-center justify-center gap-1.5 px-1.5">
-      <span className="flex-none text-sm leading-none" title="Detected from dial code">
-        {flagForPhone(phone)}
+    <div className="flex h-full w-full min-w-0 items-center justify-center gap-1.5 px-1.5">
+      <span className="flex-none text-sm leading-none" title={country.name}>
+        {country.flag}
       </span>
-      <a
-        href={`tel:${phone.replace(/[^\d+]/g, "")}`}
-        title={`Call ${phone}`}
-        className="truncate text-xs text-body hover:text-teal"
-      >
-        {phone}
-      </a>
+      <span className="flex min-w-0 flex-col leading-tight">
+        <span className="truncate text-[11px] font-medium text-body" title={country.name}>
+          {country.name}
+        </span>
+        <a
+          href={`tel:${phone.replace(/[^\d+]/g, "")}`}
+          title={`Call ${phone}`}
+          className="truncate text-[11px] text-muted hover:text-teal"
+        >
+          {phone}
+        </a>
+      </span>
       {!readOnly && (
         <button
           onClick={() => setEditing(true)}
