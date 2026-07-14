@@ -457,74 +457,174 @@ const DIAL_COUNTRIES: [string, string, string][] = [
   ["+27", "🇿🇦", "South Africa"], ["+20", "🇪🇬", "Egypt"], ["+7", "🇷🇺", "Russia"],
   ["+1", "🇺🇸", "United States"],
 ];
-function countryForPhone(raw: string): { flag: string; name: string } {
-  const p = raw.replace(/[^\d+]/g, "");
-  if (p.startsWith("+"))
-    for (const [code, flag, name] of DIAL_COUNTRIES)
-      if (p.startsWith(code)) return { flag, name };
-  return { flag: "🌐", name: "Unknown" };
+const DEFAULT_DIAL = "+61"; // business is Australia-based
+
+function countryByDial(dial: string): { flag: string; name: string } {
+  const m = DIAL_COUNTRIES.find(([c]) => c === dial);
+  return m ? { flag: m[1], name: m[2] } : { flag: "🌐", name: "Unknown" };
 }
 
+// Split a stored value into { dial, local, country }. Matches the longest dial
+// code prefix; the rest is the local number.
+function parsePhone(raw: string | null | undefined): {
+  dial: string;
+  local: string;
+  flag: string;
+  name: string;
+} {
+  const v = (raw ?? "").trim();
+  const compact = v.replace(/[^\d+]/g, "");
+  if (compact.startsWith("+")) {
+    for (const [code, flag, name] of DIAL_COUNTRIES) {
+      if (compact.startsWith(code)) {
+        return { dial: code, local: compact.slice(code.length), flag, name };
+      }
+    }
+  }
+  return { dial: "", local: v, flag: "🌐", name: "Unknown" };
+}
+
+// Country-picker phone input (client step 6): choose a country → flag + dial
+// code prefix, then type the local number. The cell shows the flag + number.
 function PhoneCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(cell?.value ?? "");
+  const [open, setOpen] = useState(false);
+  const [showCountries, setShowCountries] = useState(false);
+  const [q, setQ] = useState("");
   const [seen, setSeen] = useState(cell?.value ?? "");
+  const init = parsePhone(cell?.value);
+  const [dial, setDial] = useState(init.dial || DEFAULT_DIAL);
+  const [local, setLocal] = useState(init.local);
+  const btnRef = useRef<HTMLButtonElement>(null);
   const [, start] = useTransition();
-  // Re-sync the input when the cell value changes externally.
+
+  // Re-sync when the cell value changes externally.
   if ((cell?.value ?? "") !== seen) {
+    const p = parsePhone(cell?.value);
     setSeen(cell?.value ?? "");
-    setValue(cell?.value ?? "");
+    setDial(p.dial || DEFAULT_DIAL);
+    setLocal(p.local);
   }
 
-  function commit() {
-    setEditing(false);
-    if ((cell?.value ?? "") !== value)
-      start(() => void setCell(boardId, itemId, column.id, value || null));
+  function close() {
+    setOpen(false);
+    setShowCountries(false);
+    setQ("");
+    const next = local.trim() ? `${dial} ${local.trim()}` : null;
+    if ((cell?.value ?? null) !== next)
+      start(() => void setCell(boardId, itemId, column.id, next));
+  }
+  function clear() {
+    setLocal("");
+    setOpen(false);
+    setShowCountries(false);
+    start(() => void setCell(boardId, itemId, column.id, null));
   }
 
-  const phone = cell?.value;
-  if (editing || !phone) {
-    return (
-      <input
-        type="tel"
-        inputMode="tel"
-        autoFocus={editing}
-        value={value}
-        disabled={readOnly}
-        onChange={(e) => setValue(sanitizePhone(e.target.value))}
-        onBlur={commit}
-        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-        placeholder={readOnly ? "" : "+61…"}
-        className="h-full w-full bg-transparent px-2 text-center text-xs text-body outline-none focus:bg-teal/5"
-      />
-    );
-  }
-  const country = countryForPhone(phone);
+  const value = cell?.value;
+  const disp = parsePhone(value);
+  const current = countryByDial(dial);
+  const filtered = DIAL_COUNTRIES.filter(
+    ([code, , name]) =>
+      !q ||
+      name.toLowerCase().includes(q.toLowerCase()) ||
+      code.includes(q.replace(/[^\d+]/g, ""))
+  );
+
   return (
-    <div className="flex h-full w-full min-w-0 items-center justify-center gap-1.5 px-1.5">
-      <span className="flex-none text-sm leading-none" title={country.name}>
-        {country.flag}
-      </span>
-      <span className="flex min-w-0 flex-col leading-tight">
-        <span className="truncate text-[11px] font-medium text-body" title={country.name}>
-          {country.name}
-        </span>
-        <a
-          href={`tel:${phone.replace(/[^\d+]/g, "")}`}
-          title={`Call ${phone}`}
-          className="truncate text-[11px] text-muted hover:text-teal"
-        >
-          {phone}
-        </a>
-      </span>
-      {!readOnly && (
-        <button
-          onClick={() => setEditing(true)}
-          title="Edit phone"
-          className="flex-none text-[10px] text-muted hover:text-body"
-        >
-          ✎
-        </button>
+    <div className="relative h-full">
+      <button
+        ref={btnRef}
+        disabled={readOnly}
+        onClick={() => setOpen(true)}
+        className="flex h-full w-full min-w-0 items-center justify-center gap-1.5 px-1.5"
+        title={value ? `${disp.name} · ${value}` : undefined}
+      >
+        {value ? (
+          <>
+            <span className="flex-none text-sm leading-none">{disp.flag}</span>
+            <span className="truncate text-xs text-body">{value}</span>
+          </>
+        ) : (
+          <span className="text-xs text-muted">{readOnly ? "" : "＋ Phone"}</span>
+        )}
+      </button>
+      {open && (
+        <FloatingPanel anchorRef={btnRef} onClose={close} width={244}>
+          <div className="flex max-h-full flex-col gap-2 rounded-lg border border-hair bg-white p-2 shadow-pop">
+            {showCountries ? (
+              <>
+                <input
+                  autoFocus
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search country…"
+                  className="w-full rounded border border-hair px-2 py-1 text-xs outline-none focus:border-teal"
+                />
+                <div className="max-h-56 min-h-0 flex-1 overflow-y-auto scroll-thin">
+                  {filtered.map(([code, flag, name]) => (
+                    <button
+                      key={code + name}
+                      onClick={() => {
+                        setDial(code);
+                        setShowCountries(false);
+                        setQ("");
+                      }}
+                      className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-xs hover:bg-canvas"
+                    >
+                      <span className="text-sm">{flag}</span>
+                      <span className="flex-1 truncate text-body">{name}</span>
+                      <span className="text-muted">{code}</span>
+                    </button>
+                  ))}
+                  {filtered.length === 0 && (
+                    <p className="px-2 py-2 text-xs text-muted">No match</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                {/* country selector */}
+                <button
+                  onClick={() => setShowCountries(true)}
+                  className="flex items-center gap-2 rounded-lg border border-hair px-2 py-1.5 text-left text-xs hover:border-teal/50"
+                >
+                  <span className="text-sm">{current.flag}</span>
+                  <span className="flex-1 truncate text-body">{current.name}</span>
+                  <span className="text-muted">{dial} ▾</span>
+                </button>
+                {/* number */}
+                <div className="flex items-center gap-1.5 rounded-lg border border-hair px-2 py-1.5 focus-within:border-teal">
+                  <span className="flex-none text-xs text-muted">{dial}</span>
+                  <input
+                    autoFocus
+                    inputMode="tel"
+                    value={local}
+                    onChange={(e) => setLocal(sanitizePhone(e.target.value))}
+                    onKeyDown={(e) => e.key === "Enter" && close()}
+                    placeholder="917 000 000"
+                    className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+                  />
+                </div>
+                <div className="flex justify-end gap-1.5">
+                  {value && (
+                    <button
+                      onClick={clear}
+                      className="mr-auto rounded px-2 py-1 text-xs text-muted hover:text-danger"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    onClick={close}
+                    className="rounded bg-teal px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-deep"
+                  >
+                    Done
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </FloatingPanel>
       )}
     </div>
   );
