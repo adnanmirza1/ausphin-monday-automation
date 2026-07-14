@@ -124,6 +124,8 @@ export function BoardView({
 }) {
   const [mode, setMode] = useState<ViewMode>("table");
   const [q, setQ] = useState("");
+  const [addViewOpen, setAddViewOpen] = useState(false);
+  const [formsSignal, setFormsSignal] = useState(0); // bumps to open the Forms builder
 
   // Active saved view — default to the pinned one, else "Main".
   const pinned = views.find((v) => v.isPinned);
@@ -311,7 +313,7 @@ export function BoardView({
             </div>
             <div className="flex items-center gap-2">
               {!readOnly && <DocsButton boardId={board.id} templates={templates} columns={board.columns} />}
-              {!readOnly && <FormButton boardId={board.id} forms={board.forms} columns={board.columns} groups={board.groups.map((g) => ({ id: g.id, name: g.name }))} />}
+              {!readOnly && <FormButton boardId={board.id} forms={board.forms} columns={board.columns} groups={board.groups.map((g) => ({ id: g.id, name: g.name }))} openSignal={formsSignal} />}
               <ImportExportButton board={board} />
               {!readOnly && (
                 <Link href={`/boards/${board.id}/automations`} className={pillBtn}>⚡ Automate</Link>
@@ -344,13 +346,32 @@ export function BoardView({
               </ViewTab>
             ))}
             {!readOnly && (
-              <button
-                onClick={() => setSaving(true)}
-                className="rounded-md px-2.5 py-1.5 text-sm text-muted hover:text-teal"
-                title="Save current filters & hidden columns as a view"
-              >
-                + Save view
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setAddViewOpen((o) => !o)}
+                  className="rounded-md px-2.5 py-1.5 text-sm text-muted hover:text-teal"
+                  title="Add a view to this board"
+                >
+                  + Add view
+                </button>
+                {addViewOpen && (
+                  <>
+                    <div className="fixed inset-0 z-20" onClick={() => setAddViewOpen(false)} />
+                    <div className="absolute left-0 z-30 mt-1 w-52 rounded-xl border border-hair bg-white p-1.5 shadow-pop">
+                      <p className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                        Add a view
+                      </p>
+                      <AddViewItem icon="▤" label="Table" onClick={() => { setMode("table"); setAddViewOpen(false); }} />
+                      <AddViewItem icon="▥" label="Kanban" disabled={!hasStatus} hint={!hasStatus ? "needs a status column" : undefined} onClick={() => { setMode("kanban"); setAddViewOpen(false); }} />
+                      <AddViewItem icon="▦" label="Calendar" disabled={!hasDate} hint={!hasDate ? "needs a date column" : undefined} onClick={() => { setMode("calendar"); setAddViewOpen(false); }} />
+                      <AddViewItem icon="📊" label="Chart / Dashboard" onClick={() => { setMode("chart"); setAddViewOpen(false); }} />
+                      <AddViewItem icon="📝" label="Form" onClick={() => { setFormsSignal((s) => s + 1); setAddViewOpen(false); }} />
+                      <div className="my-1 border-t border-hair" />
+                      <AddViewItem icon="💾" label="Save current view…" onClick={() => { setSaving(true); setAddViewOpen(false); }} />
+                    </div>
+                  </>
+                )}
+              </div>
             )}
             {!readOnly && active && (
               <div className="flex items-center gap-1">
@@ -732,6 +753,33 @@ function ModeTab({
     >
       <span className="text-xs">{icon}</span>
       {children}
+    </button>
+  );
+}
+
+function AddViewItem({
+  icon,
+  label,
+  hint,
+  disabled,
+  onClick,
+}: {
+  icon: string;
+  label: string;
+  hint?: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-body hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
+      title={hint}
+    >
+      <span className="w-4 flex-none text-center">{icon}</span>
+      <span className="flex-1">{label}</span>
+      {hint && <span className="text-[10px] text-muted">{hint}</span>}
     </button>
   );
 }

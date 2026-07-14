@@ -395,14 +395,26 @@ function ItemPanel({
                   <div className="flex items-center gap-2">
                     <span
                       className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                        e.direction === "outbound"
-                          ? "bg-teal/10 text-teal-deep"
-                          : e.direction === "inbound"
-                          ? "bg-steel/15 text-steel"
-                          : "bg-canvas text-muted"
+                        e.direction !== "outbound"
+                          ? e.direction === "inbound"
+                            ? "bg-steel/15 text-steel"
+                            : "bg-canvas text-muted"
+                          : e.status === "sent"
+                          ? "bg-grass/10 text-grass"
+                          : e.status === "failed"
+                          ? "bg-danger/10 text-danger"
+                          : "bg-amber/10 text-amber"
                       }`}
                     >
-                      {e.direction === "outbound" ? "Sent" : e.direction === "inbound" ? "Received" : "Note"}
+                      {e.direction === "inbound"
+                        ? "Received"
+                        : e.direction === "note"
+                        ? "Note"
+                        : e.status === "sent"
+                        ? "✓ Sent"
+                        : e.status === "failed"
+                        ? "Not delivered"
+                        : "Logged (email not set up)"}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">
                       {e.subject || "(no subject)"}

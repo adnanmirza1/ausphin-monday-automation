@@ -4,6 +4,7 @@ import { allowedBoardIds } from "@/lib/guard";
 import { db } from "@/lib/db";
 import type { StatusLabel } from "@/lib/constants";
 import { DashboardFilters } from "@/components/dashboard/filters";
+import { DashboardCanvas, type DashData } from "@/components/dashboard/dashboard-canvas";
 
 export const dynamic = "force-dynamic";
 
@@ -128,6 +129,60 @@ export default async function DashboardPage({
   });
   const programs = [...allLabels.keys()].sort();
 
+  // Data over time — items created per month, last 6 months (respects filters).
+  const monthBuckets: { key: string; label: string; value: number }[] = [];
+  const nowD = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(nowD.getFullYear(), nowD.getMonth() - i, 1);
+    monthBuckets.push({
+      key: `${d.getFullYear()}-${d.getMonth()}`,
+      label: d.toLocaleString("en-US", { month: "short" }),
+      value: 0,
+    });
+  }
+  const monthIdx = new Map(monthBuckets.map((m, i) => [m.key, i]));
+  for (const it of filtered) {
+    const d = it.createdAt;
+    const idx = monthIdx.get(`${d.getFullYear()}-${d.getMonth()}`);
+    if (idx !== undefined) monthBuckets[idx].value++;
+  }
+
+  // Activity analytics — updates across org boards over the last 6 weeks.
+  const activitySince = new Date(Date.now() - 42 * 86400000);
+  const recentUpdates = await db.update.findMany({
+    where: {
+      createdAt: { gte: activitySince },
+      item: { board: { environment: { orgId }, ...(allowed ? { id: { in: allowed } } : {}) } },
+    },
+    select: { createdAt: true },
+  });
+  const weekBuckets: { label: string; value: number }[] = [];
+  for (let i = 5; i >= 0; i--) {
+    const start = new Date(Date.now() - (i * 7 + 6) * 86400000);
+    weekBuckets.push({ label: start.toLocaleString("en-US", { month: "short", day: "numeric" }), value: 0 });
+  }
+  for (const u of recentUpdates) {
+    const daysAgo = Math.floor((Date.now() - u.createdAt.getTime()) / 86400000);
+    const wi = 5 - Math.floor(daysAgo / 7);
+    if (wi >= 0 && wi < 6) weekBuckets[wi].value++;
+  }
+
+  const dashData: DashData = {
+    kpis: {
+      boards: boardName.size,
+      items: totalItems,
+      done: doneCount,
+      completion: doneRate,
+      people: ownerData.length,
+    },
+    status: statusData,
+    boards: boardData,
+    owners: ownerData,
+    workspaces: envs.map((e) => ({ label: e.name, value: e.boards.length, color: "#0B7A6F" })),
+    overTime: monthBuckets.map((m) => ({ label: m.label, value: m.value })),
+    activity: { totalUpdates: recentUpdates.length, series: weekBuckets },
+  };
+
   return (
     <div className="flex h-full flex-col">
       <header className="border-b border-hair bg-white px-4 py-3 sm:px-6">
@@ -144,44 +199,7 @@ export default async function DashboardPage({
           programs={programs}
         />
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          <Kpi label="Boards" value={boardName.size} accent="#5B7A99" />
-          <Kpi label="Items" value={totalItems} accent="#0B7A6F" />
-          <Kpi label="Done" value={doneCount} accent="#2E9C63" />
-          <Kpi label="Completion" value={`${doneRate}%`} accent="#2D6CDF" />
-          <Kpi label="People" value={ownerData.length} accent="#C67A1E" />
-        </div>
-
-        {/* monday-style Battery: at-a-glance progress across statuses */}
-        <div className="mt-4">
-          <Card title="Status battery" subtitle="Share of items by status">
-            {statusData.length === 0 ? <Empty /> : <Battery data={statusData} />}
-          </Card>
-        </div>
-
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <Card title="Status distribution" subtitle="Across filtered items">
-            {statusData.length === 0 ? (
-              <Empty />
-            ) : (
-              <div className="flex items-center gap-5">
-                <Donut data={statusData} />
-                <div className="min-w-0 flex-1">
-                  <BarList data={statusData.map((s) => ({ label: s.label, value: s.count, color: s.color }))} />
-                </div>
-              </div>
-            )}
-          </Card>
-          <Card title="Items per board" subtitle="Workload by board">
-            {boardData.length === 0 ? <Empty /> : <BarList data={boardData} />}
-          </Card>
-          <Card title="Top owners" subtitle="Assigned items by person">
-            {ownerData.length === 0 ? <Empty /> : <BarList data={ownerData} />}
-          </Card>
-          <Card title="Workspaces" subtitle="Boards per environment">
-            <BarList data={envs.map((e) => ({ label: e.name, value: e.boards.length, color: "#0B7A6F" }))} />
-          </Card>
-        </div>
+        <DashboardCanvas data={dashData} />
       </div>
     </div>
   );
@@ -201,128 +219,4 @@ function monthRange(month: string, now: Date): { start: Date; end: Date } | null
     };
   }
   return null;
-}
-
-function Kpi({ label, value, accent }: { label: string; value: number | string; accent: string }) {
-  return (
-    <div className="rounded-xl border border-hair bg-white p-4 shadow-soft">
-      <div className="flex items-center gap-2">
-        <span className="h-2.5 w-2.5 rounded-full" style={{ background: accent }} />
-        <span className="text-xs font-medium text-muted">{label}</span>
-      </div>
-      <p className="mt-1.5 text-3xl font-extrabold tracking-tight text-ink tabular-nums">{value}</p>
-    </div>
-  );
-}
-
-function Card({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-hair bg-white p-4 shadow-soft">
-      <div className="mb-3">
-        <h3 className="text-sm font-bold text-ink">{title}</h3>
-        <p className="text-xs text-muted">{subtitle}</p>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function BarList({ data }: { data: { label: string; value: number; color: string }[] }) {
-  const max = Math.max(1, ...data.map((d) => d.value));
-  return (
-    <div className="flex flex-col gap-2.5">
-      {data.map((d, i) => (
-        <div key={i} className="flex items-center gap-3">
-          <span className="w-28 flex-none truncate text-xs text-body">{d.label}</span>
-          <div className="h-5 flex-1 overflow-hidden rounded-md bg-canvas">
-            <div
-              className="flex h-full items-center justify-end rounded-md px-2 text-[10px] font-bold text-white"
-              style={{ width: `${(d.value / max) * 100}%`, background: d.color, minWidth: 22 }}
-            >
-              {d.value}
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// monday-style "Battery" — a single stacked bar of every status share + legend.
-function Battery({ data }: { data: { label: string; color: string; count: number }[] }) {
-  const total = data.reduce((s, d) => s + d.count, 0) || 1;
-  return (
-    <div>
-      <div className="flex h-7 w-full overflow-hidden rounded-lg">
-        {data.map((d, i) => {
-          const pct = (d.count / total) * 100;
-          return (
-            <div
-              key={i}
-              className="flex items-center justify-center text-[10px] font-bold text-white"
-              style={{ width: `${pct}%`, background: d.color }}
-              title={`${d.label}: ${d.count} (${Math.round(pct)}%)`}
-            >
-              {pct > 8 ? `${Math.round(pct)}%` : ""}
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
-        {data.map((d, i) => (
-          <div key={i} className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: d.color }} />
-            <span className="text-xs text-body">{d.label}</span>
-            <span className="text-xs font-semibold text-ink tabular-nums">{d.count}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Compact SVG donut for status distribution.
-function Donut({ data }: { data: { label: string; color: string; count: number }[] }) {
-  const total = data.reduce((s, d) => s + d.count, 0) || 1;
-  const r = 42;
-  const c = 2 * Math.PI * r;
-  // Precompute each segment's dash length + running offset (no render-time mutation).
-  const segments = data.reduce<{ color: string; dash: number; offset: number }[]>((acc, d) => {
-    const dash = (d.count / total) * c;
-    const offset = acc.length ? acc[acc.length - 1].offset + acc[acc.length - 1].dash : 0;
-    acc.push({ color: d.color, dash, offset });
-    return acc;
-  }, []);
-  return (
-    <svg width="120" height="120" viewBox="0 0 120 120" className="flex-none -rotate-90">
-      <circle cx="60" cy="60" r={r} fill="none" stroke="var(--color-canvas)" strokeWidth="16" />
-      {segments.map((s, i) => (
-        <circle
-          key={i}
-          cx="60"
-          cy="60"
-          r={r}
-          fill="none"
-          stroke={s.color}
-          strokeWidth="16"
-          strokeDasharray={`${s.dash} ${c - s.dash}`}
-          strokeDashoffset={-s.offset}
-        />
-      ))}
-      <text
-        x="60"
-        y="60"
-        textAnchor="middle"
-        dominantBaseline="central"
-        className="rotate-90 fill-ink text-lg font-extrabold"
-        style={{ transformOrigin: "center" }}
-      >
-        {total}
-      </text>
-    </svg>
-  );
-}
-
-function Empty() {
-  return <p className="py-6 text-center text-sm text-muted">No data for this filter</p>;
 }

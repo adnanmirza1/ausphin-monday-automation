@@ -780,14 +780,15 @@ function FileCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
         ref={btnRef}
         disabled={readOnly}
         onClick={() => (count > 0 ? setOpen(true) : inputRef.current?.click())}
-        className="flex h-full w-full items-center justify-center gap-1 text-xs"
-        title={count > 0 ? "View files" : readOnly ? "" : "Upload file"}
+        className="flex h-full w-full min-w-0 items-center justify-center gap-1 px-1 text-xs"
+        title={count > 0 ? (count === 1 ? files[0].name : `${count} files`) : readOnly ? "" : "Upload file"}
       >
         {busy ? (
           <span className="text-muted">Uploading…</span>
         ) : count > 0 ? (
-          <span className="truncate font-medium text-teal">
-            📎 {count === 1 ? files[0].name : `${count} files`}
+          <span className="flex min-w-0 max-w-[160px] items-center gap-1 font-medium text-teal">
+            <span className="flex-none">📎</span>
+            <span className="truncate">{count === 1 ? files[0].name : `${count} files`}</span>
           </span>
         ) : (
           <span className="text-muted">{readOnly ? "" : "⬆ Upload"}</span>

@@ -19,9 +19,10 @@ export type EmailRow = {
 };
 
 export type SendEmailResult = {
-  ok: boolean;
-  delivered: boolean; // true when SMTP actually sent; false when logged only
-  error?: string;
+  ok: boolean; // request was valid & recorded
+  delivered: boolean; // true only when SMTP actually accepted the message
+  configured: boolean; // whether SMTP is set up at all
+  error?: string; // delivery error (when configured but send failed)
 };
 
 function mapRow(r: {
@@ -97,16 +98,19 @@ export async function sendItemEmail(
   body: string
 ): Promise<SendEmailResult> {
   const user = await requireEditor();
+  const configured = mailerConfigured();
   const recipient = to.trim();
-  if (!recipient) return { ok: false, delivered: false, error: "Enter a recipient email." };
+  if (!recipient)
+    return { ok: false, delivered: false, configured, error: "Enter a recipient email." };
   if (!subject.trim() && !body.trim())
-    return { ok: false, delivered: false, error: "Enter a subject or message." };
+    return { ok: false, delivered: false, configured, error: "Enter a subject or message." };
 
   const html = `<p>${body.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br/>")}</p>`;
   const res = await sendMail({ to: recipient, subject: subject.trim() || "(no subject)", html, text: body });
 
   const delivered = res.ok === true;
-  const status = delivered ? "sent" : mailerConfigured() ? "failed" : "sent";
+  // Honest status: delivered → sent · configured but failed → failed · not set up → logged.
+  const status = delivered ? "sent" : configured ? "failed" : "logged";
 
   await db.emailMessage.create({
     data: {
@@ -123,7 +127,7 @@ export async function sendItemEmail(
   });
 
   revalidatePath(`/boards/${boardId}`);
-  return { ok: true, delivered };
+  return { ok: true, delivered, configured, error: delivered ? undefined : res.error };
 }
 
 // Manually log a received reply / note into the conversation (until inbound

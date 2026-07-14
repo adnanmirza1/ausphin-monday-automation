@@ -53,6 +53,7 @@ export function AutomationsPanel({
   const personCols = columns.filter((c) => c.type === "person");
   const numberCols = columns.filter((c) => c.type === "number");
   const emailCols = columns.filter((c) => c.type === "email");
+  const dateCols = columns.filter((c) => c.type === "date");
 
   const filtered = automations.filter(
     (a) =>
@@ -159,6 +160,7 @@ export function AutomationsPanel({
           personCols={personCols}
           numberCols={numberCols}
           emailCols={emailCols}
+          dateCols={dateCols}
           allColumns={columns}
           boards={boards}
           groups={groups}
@@ -221,6 +223,13 @@ function describe(
     then = `send an email${a.subject ? ` “${a.subject}”` : ""}`;
   else if (a?.type === "create_item_in_board")
     then = `create an item in another board${a.connect ? " (connected)" : ""}`;
+  else if (a?.type === "set_date")
+    then =
+      a.mode === "today"
+        ? `set ${colName(a.columnId)} to today`
+        : a.mode === "offset"
+        ? `set ${colName(a.columnId)} to +${a.offsetDays ?? 0} days`
+        : `set ${colName(a.columnId)}${a.date ? ` to ${a.date}` : ""}`;
 
   return { when, then };
 }
@@ -332,6 +341,7 @@ function CreateModal({
   personCols,
   numberCols,
   emailCols,
+  dateCols,
   allColumns,
   boards,
   groups,
@@ -345,6 +355,7 @@ function CreateModal({
   personCols: Col[];
   numberCols: Col[];
   emailCols: Col[];
+  dateCols: Col[];
   allColumns: Col[];
   boards: { id: string; name: string }[];
   groups: Grp[];
@@ -379,6 +390,7 @@ function CreateModal({
     | "request_invoice"
     | "send_email"
     | "create_item_in_board"
+    | "set_date"
   >(ea.type ?? "move_to_group");
   const [aEmailCol, setAEmailCol] = useState(
     (ea.type === "send_email" ? ea.toColumnId : "") || emailCols[0]?.id || ""
@@ -406,6 +418,17 @@ function CreateModal({
   const [aTemplate, setATemplate] = useState(ea.templateId ?? templates[0]?.id ?? "");
   const [aAccount, setAAccount] = useState(ea.account ?? "pty");
   const [aAmountCol, setAAmountCol] = useState(ea.amountColumnId ?? numberCols[0]?.id ?? "");
+  // Set-date action (A2)
+  const [aDateCol, setADateCol] = useState(
+    (ea.type === "set_date" ? ea.columnId : "") || dateCols[0]?.id || ""
+  );
+  const [aDateMode, setADateMode] = useState<"specific" | "today" | "offset">(
+    ea.type === "set_date" ? ea.mode ?? "specific" : "specific"
+  );
+  const [aDateValue, setADateValue] = useState(ea.type === "set_date" ? ea.date ?? "" : "");
+  const [aDateOffset, setADateOffset] = useState<number>(
+    ea.type === "set_date" ? ea.offsetDays ?? 7 : 7
+  );
 
   const tColObj = statusCols.find((c) => c.id === tCol);
   const aStatusColObj = statusCols.find((c) => c.id === aStatusCol);
@@ -487,6 +510,15 @@ function CreateModal({
         break;
       case "create_item_in_board":
         action = { type: "create_item_in_board", boardId: aTargetBoard, connect: aConnect };
+        break;
+      case "set_date":
+        action = {
+          type: "set_date",
+          columnId: aDateCol,
+          mode: aDateMode,
+          ...(aDateMode === "specific" ? { date: aDateValue } : {}),
+          ...(aDateMode === "offset" ? { offsetDays: Number(aDateOffset) || 0 } : {}),
+        };
         break;
       default:
         action = { type: "move_to_group", groupId: aGroup };
@@ -589,6 +621,7 @@ function CreateModal({
               <option value="request_invoice">Request an invoice (to Finance)</option>
               <option value="send_email">Send an email</option>
               <option value="create_item_in_board">Create item in another board</option>
+              <option value="set_date">Set a date</option>
             </select>
 
             {aType === "move_to_group" && (
@@ -732,6 +765,48 @@ function CreateModal({
                   <input type="checkbox" checked={aConnect} onChange={(e) => setAConnect(e.target.checked)} />
                   Connect the two items (enables mirror columns)
                 </label>
+              </div>
+            )}
+            {aType === "set_date" && (
+              <div className="mt-2 grid gap-2">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-body">Date column to update</label>
+                  <select value={aDateCol} onChange={(e) => setADateCol(e.target.value)} className={inp}>
+                    {dateCols.length === 0 && <option value="">No date column on this board</option>}
+                    {dateCols.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-body">Set to</label>
+                  <select
+                    value={aDateMode}
+                    onChange={(e) => setADateMode(e.target.value as "specific" | "today" | "offset")}
+                    className={inp}
+                  >
+                    <option value="specific">A specific date</option>
+                    <option value="today">Today (when it runs)</option>
+                    <option value="offset">In N days from today</option>
+                  </select>
+                </div>
+                {aDateMode === "specific" && (
+                  <input type="date" value={aDateValue} onChange={(e) => setADateValue(e.target.value)} className={inp} />
+                )}
+                {aDateMode === "offset" && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={aDateOffset}
+                      onChange={(e) => setADateOffset(Number(e.target.value))}
+                      className={`${inp} w-24`}
+                    />
+                    <span className="text-sm text-muted">days from today</span>
+                  </div>
+                )}
+                {dateCols.length === 0 && (
+                  <p className="text-xs text-amber">Add a Date column to the board to use this action.</p>
+                )}
               </div>
             )}
           </div>

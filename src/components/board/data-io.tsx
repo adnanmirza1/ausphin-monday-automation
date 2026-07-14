@@ -149,7 +149,7 @@ export function ImportExportButton({ board }: { board: BoardData }) {
                 }}
                 className="block w-full rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas"
               >
-                ⬆ Import from CSV
+                ⬆ Import (CSV / Excel)
               </button>
             </div>
           </>
@@ -168,27 +168,47 @@ function ImportModal({ board, onClose }: { board: BoardData; onClose: () => void
   const [done, setDone] = useState<number | null>(null);
   const [, start] = useTransition();
 
+  // Common ingest: take a matrix of rows, set header + rows + auto-mapping.
+  function ingest(parsed: string[][]) {
+    if (parsed.length === 0) return;
+    const hdr = parsed[0];
+    setHeader(hdr);
+    setRows(parsed.slice(1));
+    // Auto-map by matching header text to column names; first col → Name.
+    setMapping(
+      hdr.map((h, i) => {
+        if (i === 0) return "__name__";
+        const match = board.columns.find((c) => c.name.toLowerCase() === h.trim().toLowerCase());
+        return match ? match.id : "";
+      })
+    );
+  }
+
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    const isExcel = /\.(xlsx|xls)$/i.test(file.name) || file.type.includes("spreadsheet") || file.type.includes("ms-excel");
     const reader = new FileReader();
-    reader.onload = () => {
-      const parsed = parseCsv(String(reader.result));
-      if (parsed.length === 0) return;
-      const hdr = parsed[0];
-      setHeader(hdr);
-      setRows(parsed.slice(1));
-      // Auto-map by matching header text to column names; first col → Name.
-      setMapping(
-        hdr.map((h, i) => {
-          if (i === 0) return "__name__";
-          const match = board.columns.find((c) => c.name.toLowerCase() === h.trim().toLowerCase());
-          return match ? match.id : "";
-        })
-      );
-    };
-    reader.readAsText(file);
+    if (isExcel) {
+      // Parse .xlsx / .xls via SheetJS (loaded on demand).
+      reader.onload = async () => {
+        const XLSX = await import("xlsx");
+        const wb = XLSX.read(new Uint8Array(reader.result as ArrayBuffer), { type: "array" });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const matrix = XLSX.utils.sheet_to_json<string[]>(sheet, {
+          header: 1,
+          raw: false,
+          defval: "",
+          blankrows: false,
+        });
+        ingest(matrix.map((row) => (row ?? []).map((c) => String(c ?? ""))));
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.onload = () => ingest(parseCsv(String(reader.result)));
+      reader.readAsText(file);
+    }
   }
 
   function runImport() {
@@ -204,7 +224,7 @@ function ImportModal({ board, onClose }: { board: BoardData; onClose: () => void
       <div className="absolute inset-0 bg-ink/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative z-10 flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-hair bg-white shadow-pop">
         <div className="flex items-center justify-between border-b border-hair px-5 py-4">
-          <h2 className="text-base font-bold text-ink">Import from CSV</h2>
+          <h2 className="text-base font-bold text-ink">Import from CSV / Excel</h2>
           <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-muted hover:bg-canvas">✕</button>
         </div>
 
@@ -216,8 +236,13 @@ function ImportModal({ board, onClose }: { board: BoardData; onClose: () => void
           ) : !rows ? (
             <label className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed border-hair py-10 text-sm text-muted hover:border-teal hover:text-teal">
               <span className="text-2xl">⬆</span>
-              Choose a .csv file (first row = headers)
-              <input type="file" accept=".csv,text/csv" onChange={onFile} className="hidden" />
+              Choose a .csv or .xlsx file (first row = headers)
+              <input
+                type="file"
+                accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                onChange={onFile}
+                className="hidden"
+              />
             </label>
           ) : (
             <>

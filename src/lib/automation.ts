@@ -27,7 +27,8 @@ type Action =
   | { type: "generate_document"; templateId: string }
   | { type: "request_invoice"; account: string; amountColumnId?: string }
   | { type: "send_email"; toColumnId?: string; subject: string; body: string }
-  | { type: "create_item_in_board"; boardId: string; connect?: boolean };
+  | { type: "create_item_in_board"; boardId: string; connect?: boolean }
+  | { type: "set_date"; columnId: string; mode: "specific" | "today" | "offset"; date?: string; offsetDays?: number };
 
 function parse<T>(raw: string): T | null {
   try {
@@ -111,6 +112,40 @@ async function execute(action: Action, event: AutomationEvent) {
         where: { itemId_columnId: { itemId, columnId: action.columnId } },
         create: { itemId, columnId: action.columnId, value: action.to },
         update: { value: action.to },
+      });
+      break;
+    }
+
+    case "set_date": {
+      // Only allow writing to an actual Date column (A2).
+      const col = await db.column.findFirst({
+        where: { id: action.columnId, type: "date" },
+        select: { id: true },
+      });
+      if (!col) break;
+      let dateStr = "";
+      const today = new Date();
+      const iso = (d: Date) =>
+        `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(
+          d.getUTCDate()
+        ).padStart(2, "0")}`;
+      if (action.mode === "today") {
+        dateStr = iso(today);
+      } else if (action.mode === "offset") {
+        const d = new Date(
+          Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())
+        );
+        d.setUTCDate(d.getUTCDate() + (action.offsetDays ?? 0));
+        dateStr = iso(d);
+      } else {
+        dateStr = action.date ?? "";
+      }
+      if (!dateStr) break;
+      // Upsert only (no cascade) — mirrors set_status, avoids trigger loops.
+      await db.cell.upsert({
+        where: { itemId_columnId: { itemId, columnId: action.columnId } },
+        create: { itemId, columnId: action.columnId, value: dateStr },
+        update: { value: dateStr },
       });
       break;
     }

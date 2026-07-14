@@ -41,12 +41,18 @@ export function EmailComposer({
         return;
       }
       onSent?.();
-      setMsg(
-        res.delivered
-          ? "Email sent."
-          : "Saved to conversation history. (Connect SMTP in Integrations to deliver it.)"
-      );
-      setTimeout(onClose, res.delivered ? 700 : 1600);
+      if (res.delivered) {
+        setMsg("✓ Email sent.");
+        setTimeout(onClose, 800);
+      } else if (res.configured) {
+        // SMTP is set up but the server rejected it — do NOT claim success.
+        setErr(
+          "Email could not be delivered — the mail server rejected it (check the email settings / app password). It's saved to the conversation history."
+        );
+      } else {
+        setMsg("Saved to conversation history. Email isn't set up yet (add SMTP to deliver).");
+        setTimeout(onClose, 1800);
+      }
     });
   }
 

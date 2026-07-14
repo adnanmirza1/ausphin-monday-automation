@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireEditor } from "@/lib/guard";
 import { runAutomations } from "@/lib/automation";
+import { sendMail, mailerConfigured } from "@/lib/mailer";
 
 // ── Save form config (board editors) ─────────────────────────
 export async function saveFormConfig(
@@ -128,6 +129,30 @@ export async function regenerateFormSlug(formId: string): Promise<string | null>
   return slug;
 }
 
+// Set a custom, branded shortened URL for a form (Additional #1 + Improvement #3).
+export type SlugResult = { ok: boolean; slug?: string; error?: string };
+export async function setFormSlug(formId: string, raw: string): Promise<SlugResult> {
+  await requireEditor();
+  const slug = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  if (slug.length < 3) return { ok: false, error: "Use at least 3 characters (letters, numbers, hyphens)." };
+  if (slug.length > 40) return { ok: false, error: "Keep it under 40 characters." };
+  const form = await db.form.findUnique({ where: { id: formId }, select: { boardId: true } });
+  if (!form) return { ok: false, error: "Form not found." };
+  const [boardClash, formClash] = await Promise.all([
+    db.board.findUnique({ where: { formSlug: slug }, select: { id: true } }),
+    db.form.findFirst({ where: { slug, NOT: { id: formId } }, select: { id: true } }),
+  ]);
+  if (boardClash || formClash) return { ok: false, error: "That link is already taken — try another." };
+  await db.form.update({ where: { id: formId }, data: { slug } });
+  revalidatePath(`/boards/${form.boardId}`);
+  return { ok: true, slug };
+}
+
 // ── Public submission (no auth) with de-dup by a chosen column ─
 export type SubmitState = { ok: boolean; error?: string; message?: string };
 
@@ -135,7 +160,7 @@ export type SubmitState = { ok: boolean; error?: string; message?: string };
 async function runSubmission(boardId: string, cfg: FormCfg, formData: FormData): Promise<SubmitState> {
   const board = await db.board.findUnique({
     where: { id: boardId },
-    include: { columns: true, groups: { orderBy: { position: "asc" } } },
+    include: { columns: true, groups: { orderBy: { position: "asc" } }, environment: true },
   });
   if (!board) return { ok: false, error: "This form is not available." };
   const includedIds = cfg.columns ?? [];
@@ -251,6 +276,39 @@ async function runSubmission(boardId: string, cfg: FormCfg, formData: FormData):
   }
   } catch (e) {
     console.error("[form:connect-error]", e);
+  }
+
+  // Confirmation email to the submitter (if they gave an email address) and a
+  // record on the item's conversation history. No-op / logged until SMTP works.
+  try {
+    const emailCol2 = board.columns.find((c) => c.type === "email");
+    const toEmail = emailCol2
+      ? values.find((v) => v.columnId === emailCol2.id)?.value ?? null
+      : null;
+    if (toEmail) {
+      const subject = `We received your submission — ${board.name}`;
+      const bodyText = `${message}\n\nHi ${name}, thanks for your submission to ${board.name}. Our team will be in touch.`;
+      const res = await sendMail({
+        to: toEmail,
+        subject,
+        html: `<p>Hi ${name},</p><p>${message}</p><p>Our team will be in touch shortly.</p><p>— ${board.name}</p>`,
+        text: bodyText,
+      });
+      await db.emailMessage.create({
+        data: {
+          orgId: board.environment.orgId,
+          itemId: finalItemId,
+          direction: "outbound",
+          status: res.ok ? "sent" : mailerConfigured() ? "failed" : "logged",
+          fromEmail: process.env.SMTP_FROM || "",
+          toEmail,
+          subject,
+          body: bodyText,
+        },
+      });
+    }
+  } catch (e) {
+    console.error("[form:confirm-email-error]", e);
   }
 
   revalidatePath(`/boards/${boardId}`);

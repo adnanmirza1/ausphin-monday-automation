@@ -1,9 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import type { ColumnData, FormLite } from "@/lib/board-types";
-import { createForm, updateForm, deleteForm, regenerateFormSlug } from "@/app/actions/form";
+import { createForm, updateForm, deleteForm, regenerateFormSlug, setFormSlug } from "@/app/actions/form";
 
 const FORM_TYPES = ["text", "longtext", "status", "date", "number", "email", "phone", "signature"];
 
@@ -12,17 +12,24 @@ export function FormButton({
   forms,
   columns,
   groups = [],
+  openSignal = 0,
 }: {
   boardId: string;
   forms: FormLite[];
   columns: ColumnData[];
   groups?: { id: string; name: string }[];
+  openSignal?: number; // bump from parent (e.g. "+ Add view → Form") to open this
 }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<FormLite | null>(null);
   const router = useRouter();
   const [, start] = useTransition();
   const liveCount = forms.filter((f) => f.enabled).length;
+
+  // Open the forms panel when the parent bumps openSignal (skip initial 0).
+  useEffect(() => {
+    if (openSignal > 0) setOpen(true);
+  }, [openSignal]);
 
   function newForm() {
     start(async () => {
@@ -134,7 +141,11 @@ function FormEditor({
   const [welcome, setWelcome] = useState(form.welcomeMessage);
   const [copied, setCopied] = useState(false);
   const [slug, setSlug] = useState(form.slug);
+  const [customSlug, setCustomSlug] = useState(form.slug ?? "");
+  const [slugErr, setSlugErr] = useState<string | null>(null);
+  const [slugSaved, setSlugSaved] = useState(false);
   const [regen, startRegen] = useTransition();
+  const [savingSlug, startSlug] = useTransition();
   const [, start] = useTransition();
 
   const formCols = columns.filter((c) => FORM_TYPES.includes(c.type));
@@ -144,7 +155,26 @@ function FormEditor({
   function regenerate() {
     startRegen(async () => {
       const s = await regenerateFormSlug(form.id);
-      if (s) setSlug(s);
+      if (s) {
+        setSlug(s);
+        setCustomSlug(s);
+      }
+    });
+  }
+
+  function saveCustomSlug() {
+    setSlugErr(null);
+    setSlugSaved(false);
+    startSlug(async () => {
+      const res = await setFormSlug(form.id, customSlug);
+      if (res.ok && res.slug) {
+        setSlug(res.slug);
+        setCustomSlug(res.slug);
+        setSlugSaved(true);
+        setTimeout(() => setSlugSaved(false), 1500);
+      } else {
+        setSlugErr(res.error ?? "Could not save link.");
+      }
     });
   }
 
@@ -276,13 +306,38 @@ function FormEditor({
                     {copied ? "Copied!" : "Copy link"}
                   </button>
                 </div>
-                <button
-                  onClick={regenerate}
-                  disabled={regen}
-                  className="mt-1.5 text-[11px] font-medium text-teal hover:underline disabled:opacity-50"
-                >
-                  {regen ? "Generating…" : "↻ Generate a new short link"}
-                </button>
+
+                {/* Custom / branded slug (Additional #1 + Improvement #3) */}
+                <div className="mt-2">
+                  <label className="mb-1 block text-[11px] font-medium text-muted">
+                    Customise the link (branded &amp; short)
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <span className="flex-none font-mono text-xs text-muted">/f/</span>
+                    <input
+                      value={customSlug}
+                      onChange={(e) => setCustomSlug(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && saveCustomSlug()}
+                      placeholder="oswin-intake"
+                      className="min-w-0 flex-1 rounded-lg border border-hair px-2.5 py-1.5 font-mono text-xs outline-none focus:border-teal"
+                    />
+                    <button
+                      onClick={saveCustomSlug}
+                      disabled={savingSlug || customSlug === slug}
+                      className="flex-none rounded bg-teal px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
+                    >
+                      {savingSlug ? "Saving…" : slugSaved ? "Saved!" : "Save"}
+                    </button>
+                  </div>
+                  {slugErr && <p className="mt-1 text-[11px] text-danger">{slugErr}</p>}
+                  <button
+                    onClick={regenerate}
+                    disabled={regen}
+                    className="mt-1.5 text-[11px] font-medium text-teal hover:underline disabled:opacity-50"
+                  >
+                    {regen ? "Generating…" : "↻ Use a random short code instead"}
+                  </button>
+                </div>
               </>
             ) : (
               <button
