@@ -24,7 +24,7 @@ export default async function ShortFormPage({
       include: { columns: { orderBy: { position: "asc" } } },
     });
     if (!board) notFound();
-    let cfg: { columns?: string[] } = {};
+    let cfg: { columns?: string[]; appearance?: import("@/lib/board-types").FormAppearance } = {};
     try {
       cfg = JSON.parse(form.config);
     } catch {}
@@ -47,6 +47,7 @@ export default async function ShortFormPage({
         title={form.title || board.name}
         desc={form.desc}
         fields={fields}
+        appearance={cfg.appearance}
       />
     );
   }

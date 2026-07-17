@@ -27,7 +27,7 @@ export default async function FormPage({
     );
   }
 
-  let cfg: { columns?: string[] } = {};
+  let cfg: { columns?: string[]; appearance?: import("@/lib/board-types").FormAppearance } = {};
   try {
     cfg = JSON.parse(board.formConfig);
   } catch {}
@@ -53,6 +53,7 @@ export default async function FormPage({
       title={board.formTitle || board.name}
       desc={board.formDesc}
       fields={fields}
+      appearance={cfg.appearance}
     />
   );
 }

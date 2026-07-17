@@ -58,6 +58,17 @@ export type GroupData = {
   items: ItemData[];
 };
 
+// Branding/theme for a public form (Form Customization).
+export type FormAppearance = {
+  logo?: string; // data URL (uploaded company logo)
+  bg?: string; // page background colour
+  brand?: string; // header band colour
+  button?: string; // primary/submit button colour
+  text?: string; // header text colour
+  radius?: number; // corner radius in px
+  font?: "sans" | "serif" | "mono"; // typography
+};
+
 export type FormConfig = {
   enabled: boolean;
   title: string;
@@ -67,6 +78,7 @@ export type FormConfig = {
   groupId: string | null; // destination group for new submissions
   welcomeMessage: string; // shown after submit
   slug: string | null; // short public link code (/f/<slug>)
+  appearance?: FormAppearance;
 };
 
 export type FormLite = {
@@ -79,6 +91,7 @@ export type FormLite = {
   dedupeColumnId: string | null;
   groupId: string | null;
   welcomeMessage: string;
+  appearance?: FormAppearance;
 };
 
 export type BoardData = {

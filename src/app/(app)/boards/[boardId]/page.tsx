@@ -3,9 +3,10 @@ import { getCurrentUser } from "@/lib/auth";
 import { allowedBoardIds, canEditColumn } from "@/lib/guard";
 import { db } from "@/lib/db";
 import { getBoard, getOrgPeople } from "@/lib/queries";
-import type { BoardData, ColumnData } from "@/lib/board-types";
+import type { BoardData, ColumnData, FormAppearance } from "@/lib/board-types";
 import type { ColumnType, StatusLabel } from "@/lib/constants";
 import { BoardView } from "@/components/board/board-view";
+import type { ViewType } from "@/app/actions/views";
 
 export default async function BoardPage({
   params,
@@ -118,15 +119,24 @@ export default async function BoardPage({
   ]);
 
   const views = viewRows.map((v) => {
-    let config = { hiddenColumns: [] as string[], filters: [] as { columnId: string; value: string }[] };
+    let config = {
+      hiddenColumns: [] as string[],
+      filters: [] as { columnId: string; value: string }[],
+      widgets: [] as unknown[],
+      dashBoards: [] as string[],
+      dashFilters: [] as unknown[],
+    };
     try {
       const parsed = JSON.parse(v.config);
       config = {
         hiddenColumns: parsed.hiddenColumns ?? [],
         filters: parsed.filters ?? [],
+        widgets: parsed.widgets ?? [],
+        dashBoards: parsed.dashBoards ?? [],
+        dashFilters: parsed.dashFilters ?? [],
       };
     } catch {}
-    return { id: v.id, name: v.name, isPinned: v.isPinned, config };
+    return { id: v.id, name: v.name, type: (v.type ?? "table") as ViewType, isPinned: v.isPinned, config };
   });
 
   // Parse column configs (status labels + connection/mirror wiring).
@@ -207,6 +217,7 @@ export default async function BoardPage({
         dedupeColumnId?: string | null;
         groupId?: string | null;
         welcomeMessage?: string;
+        appearance?: FormAppearance;
       } = {};
       try {
         fc = JSON.parse(f.config);
@@ -221,6 +232,7 @@ export default async function BoardPage({
         dedupeColumnId: fc.dedupeColumnId ?? null,
         groupId: fc.groupId ?? null,
         welcomeMessage: fc.welcomeMessage ?? "",
+        appearance: fc.appearance,
       };
     }),
     columns,

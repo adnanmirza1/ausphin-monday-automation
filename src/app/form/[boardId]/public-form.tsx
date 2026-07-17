@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import type { StatusLabel } from "@/lib/constants";
+import type { FormAppearance } from "@/lib/board-types";
 import { submitForm, submitFormById, type SubmitState } from "@/app/actions/form";
 
 export type FormField = {
@@ -9,6 +10,12 @@ export type FormField = {
   name: string;
   type: string;
   labels: StatusLabel[];
+};
+
+const FONT_STACK: Record<string, string> = {
+  sans: "ui-sans-serif, system-ui, -apple-system, sans-serif",
+  serif: "Georgia, 'Times New Roman', serif",
+  mono: "ui-monospace, 'SF Mono', Menlo, monospace",
 };
 
 const HTML_TYPE: Record<string, string> = {
@@ -26,12 +33,14 @@ export function PublicForm({
   title,
   desc,
   fields,
+  appearance,
 }: {
   boardId: string;
   formId?: string;
   title: string;
   desc: string;
   fields: FormField[];
+  appearance?: FormAppearance;
 }) {
   const action = formId ? submitFormById.bind(null, formId) : submitForm.bind(null, boardId);
   const [state, formAction, pending] = useActionState<SubmitState | null, FormData>(
@@ -39,13 +48,20 @@ export function PublicForm({
     null
   );
 
+  const ap = appearance ?? {};
+  const radius = ap.radius ?? 16;
+  const pageStyle: React.CSSProperties = {
+    background: ap.bg || undefined,
+    fontFamily: ap.font ? FONT_STACK[ap.font] : undefined,
+  };
+  const inputStyle: React.CSSProperties = { borderRadius: Math.max(6, radius - 6) };
+  const btnStyle: React.CSSProperties = { background: ap.button || undefined, borderRadius: Math.max(6, radius - 6) };
+
   if (state?.ok) {
     return (
-      <div className="grid min-h-screen place-items-center bg-canvas p-6">
-        <div className="w-full max-w-md rounded-2xl border border-hair bg-white p-8 text-center shadow-soft">
-          <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-grass/10 text-2xl">
-            ✓
-          </div>
+      <div className="grid min-h-screen place-items-center bg-canvas p-6" style={pageStyle}>
+        <div className="w-full max-w-md border border-hair bg-white p-8 text-center shadow-soft" style={{ borderRadius: radius }}>
+          <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-grass/10 text-2xl">✓</div>
           <h1 className="mt-3 text-xl font-bold text-ink">Submitted</h1>
           <p className="mt-1 text-sm text-muted">{state.message}</p>
         </div>
@@ -54,29 +70,41 @@ export function PublicForm({
   }
 
   return (
-    <div className="min-h-screen bg-canvas px-4 py-10">
+    <div className="min-h-screen bg-canvas px-4 py-10" style={pageStyle}>
       <div className="mx-auto w-full max-w-lg">
         {/* Header band */}
-        <div className="rounded-t-2xl bg-rail px-6 py-5 text-white">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-white/50">
-            Oswin · Intake Form
-          </p>
+        <div
+          className="bg-rail px-6 py-5 text-white"
+          style={{
+            background: ap.brand || undefined,
+            color: ap.text || undefined,
+            borderTopLeftRadius: radius,
+            borderTopRightRadius: radius,
+          }}
+        >
+          {ap.logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={ap.logo} alt="logo" className="mb-2 h-8 max-w-[160px] object-contain" />
+          ) : (
+            <p className="font-mono text-[10px] uppercase tracking-widest opacity-60">Oswin · Intake Form</p>
+          )}
           <h1 className="mt-1 text-xl font-bold">{title}</h1>
-          {desc && <p className="mt-1 text-sm text-white/60">{desc}</p>}
+          {desc && <p className="mt-1 text-sm opacity-70">{desc}</p>}
         </div>
 
         <form
           action={formAction}
-          className="flex flex-col gap-4 rounded-b-2xl border border-t-0 border-hair bg-white p-6 shadow-soft"
+          className="flex flex-col gap-4 border border-t-0 border-hair bg-white p-6 shadow-soft"
+          style={{ borderBottomLeftRadius: radius, borderBottomRightRadius: radius }}
         >
           <Field label="Name" required>
-            <input name="__name" required className={inp} placeholder="Your full name" />
+            <input name="__name" required className={inp} style={inputStyle} placeholder="Your full name" />
           </Field>
 
           {fields.map((f) => (
             <Field key={f.id} label={f.name}>
               {f.type === "status" ? (
-                <select name={f.id} defaultValue="" className={inp}>
+                <select name={f.id} defaultValue="" className={inp} style={inputStyle}>
                   <option value="">—</option>
                   {f.labels.map((l) => (
                     <option key={l.id} value={l.id}>{l.label}</option>
@@ -85,9 +113,9 @@ export function PublicForm({
               ) : f.type === "signature" ? (
                 <SignatureField name={f.id} />
               ) : HTML_TYPE[f.type] === "textarea" ? (
-                <textarea name={f.id} rows={3} className={inp} />
+                <textarea name={f.id} rows={3} className={inp} style={inputStyle} />
               ) : (
-                <input name={f.id} type={HTML_TYPE[f.type] ?? "text"} className={inp} />
+                <input name={f.id} type={HTML_TYPE[f.type] ?? "text"} className={inp} style={inputStyle} />
               )}
             </Field>
           ))}
@@ -99,7 +127,8 @@ export function PublicForm({
           <button
             type="submit"
             disabled={pending}
-            className="mt-1 rounded-lg bg-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-60"
+            className="mt-1 bg-teal px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+            style={btnStyle}
           >
             {pending ? "Submitting…" : "Submit"}
           </button>

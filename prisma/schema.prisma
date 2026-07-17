@@ -246,11 +246,16 @@ model Update {
 }
 
 // Saved filtered/hidden-column presentation of a board.
+// A saved, typed presentation of a board shown as its own tab.
+// type: table | kanban | calendar | chart | dashboard
+// config JSON: table/kanban/calendar/chart → { hiddenColumns:[], filters:[] };
+//              dashboard → { widgets: Widget[] }  (see dashboard widget builder)
 model BoardView {
   id        String   @id @default(cuid())
   boardId   String
   name      String
-  config    String   @default("{}") // JSON: { hiddenColumns:[], filters:[] }
+  type      String   @default("table")
+  config    String   @default("{}")
   isPinned  Boolean  @default(false)
   position  Int      @default(0)
   createdAt DateTime @default(now())

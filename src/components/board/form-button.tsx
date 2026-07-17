@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import type { ColumnData, FormLite } from "@/lib/board-types";
+import type { ColumnData, FormLite, FormAppearance } from "@/lib/board-types";
 import { createForm, updateForm, deleteForm, regenerateFormSlug, setFormSlug } from "@/app/actions/form";
 
 const FORM_TYPES = ["text", "longtext", "status", "date", "number", "email", "phone", "signature"];
@@ -139,6 +139,8 @@ function FormEditor({
   const [dedupe, setDedupe] = useState<string | null>(form.dedupeColumnId);
   const [groupId, setGroupId] = useState<string | null>(form.groupId);
   const [welcome, setWelcome] = useState(form.welcomeMessage);
+  const [appearance, setAppearance] = useState<FormAppearance>(form.appearance ?? {});
+  const [logoErr, setLogoErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [slug, setSlug] = useState(form.slug);
   const [customSlug, setCustomSlug] = useState(form.slug ?? "");
@@ -181,6 +183,21 @@ function FormEditor({
   const toggleCol = (id: string) =>
     setCols((cs) => (cs.includes(id) ? cs.filter((x) => x !== id) : [...cs, id]));
 
+  const setAp = (patch: Partial<FormAppearance>) => setAppearance((a) => ({ ...a, ...patch }));
+  function onLogo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    setLogoErr(null);
+    if (!file) return;
+    if (file.size > 1024 * 1024) {
+      setLogoErr("Logo must be under 1 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setAp({ logo: String(reader.result) });
+    reader.readAsDataURL(file);
+  }
+
   function save() {
     start(() =>
       void updateForm(form.id, {
@@ -192,6 +209,7 @@ function FormEditor({
           dedupeColumnId: dedupe && cols.includes(dedupe) ? dedupe : null,
           groupId: groupId && groups.some((g) => g.id === groupId) ? groupId : null,
           welcomeMessage: welcome,
+          appearance,
         },
       })
     );
@@ -287,6 +305,76 @@ function FormEditor({
             <input value={welcome} onChange={(e) => setWelcome(e.target.value)} placeholder="Thanks! Your submission was received." className={inp} />
           </label>
 
+          {/* Appearance / branding (Form Customization) */}
+          <div className="rounded-xl border border-hair p-3">
+            <p className="mb-2 text-xs font-semibold text-body">Appearance</p>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="col-span-2 flex items-center justify-between gap-2 text-xs text-body">
+                <span>Company logo</span>
+                <span className="flex items-center gap-2">
+                  {appearance.logo && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={appearance.logo} alt="logo" className="h-6 max-w-[80px] object-contain" />
+                  )}
+                  <label className="cursor-pointer rounded border border-hair px-2 py-1 text-[11px] hover:bg-canvas">
+                    Upload
+                    <input type="file" accept="image/*" onChange={onLogo} className="hidden" />
+                  </label>
+                  {appearance.logo && (
+                    <button onClick={() => setAp({ logo: undefined })} className="text-[11px] text-muted hover:text-danger">Remove</button>
+                  )}
+                </span>
+              </label>
+              {logoErr && <p className="col-span-2 text-[11px] text-danger">{logoErr}</p>}
+              <ColorField label="Background" value={appearance.bg ?? "#f6f8f8"} onChange={(v) => setAp({ bg: v })} />
+              <ColorField label="Brand / header" value={appearance.brand ?? "#0f1b2d"} onChange={(v) => setAp({ brand: v })} />
+              <ColorField label="Button" value={appearance.button ?? "#0B7A6F"} onChange={(v) => setAp({ button: v })} />
+              <ColorField label="Header text" value={appearance.text ?? "#ffffff"} onChange={(v) => setAp({ text: v })} />
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] text-muted">Corner radius</span>
+                <input type="range" min={0} max={24} value={appearance.radius ?? 12} onChange={(e) => setAp({ radius: Number(e.target.value) })} />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] text-muted">Typography</span>
+                <select value={appearance.font ?? "sans"} onChange={(e) => setAp({ font: e.target.value as FormAppearance["font"] })} className={inp}>
+                  <option value="sans">Sans-serif</option>
+                  <option value="serif">Serif</option>
+                  <option value="mono">Monospace</option>
+                </select>
+              </label>
+            </div>
+
+            {/* Live preview */}
+            <p className="mb-1.5 mt-3 text-[10px] font-semibold uppercase tracking-wide text-muted">Live preview</p>
+            <div
+              className="overflow-hidden border border-hair"
+              style={{
+                background: appearance.bg ?? "#f6f8f8",
+                borderRadius: (appearance.radius ?? 12) + 4,
+                fontFamily:
+                  appearance.font === "serif" ? "Georgia, serif" : appearance.font === "mono" ? "ui-monospace, monospace" : "ui-sans-serif, system-ui, sans-serif",
+              }}
+            >
+              <div className="px-4 py-3" style={{ background: appearance.brand ?? "#0f1b2d", color: appearance.text ?? "#fff" }}>
+                {appearance.logo && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={appearance.logo} alt="logo" className="mb-1 h-6 object-contain" />
+                )}
+                <p className="text-sm font-bold">{title || "Form title"}</p>
+                {desc && <p className="text-xs opacity-80">{desc}</p>}
+              </div>
+              <div className="space-y-2 p-4">
+                <div className="rounded border border-hair bg-white px-2 py-1.5 text-[11px] text-muted" style={{ borderRadius: appearance.radius ?? 12 }}>Your full name</div>
+                <button
+                  className="w-full py-2 text-xs font-semibold text-white"
+                  style={{ background: appearance.button ?? "#0B7A6F", borderRadius: appearance.radius ?? 12 }}
+                >
+                  Submit
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div>
             <span className="mb-1.5 block text-xs font-semibold text-body">
               Shortened public link
@@ -364,3 +452,15 @@ function FormEditor({
 
 const inp =
   "w-full rounded-lg border border-hair bg-white px-2.5 py-2 text-sm text-ink outline-none focus:border-teal";
+
+function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[11px] text-muted">{label}</span>
+      <span className="flex items-center gap-1.5 rounded-lg border border-hair px-1.5 py-1">
+        <input type="color" value={value} onChange={(e) => onChange(e.target.value)} className="h-6 w-8 cursor-pointer border-0 bg-transparent p-0" />
+        <input value={value} onChange={(e) => onChange(e.target.value)} className="min-w-0 flex-1 bg-transparent text-xs outline-none" />
+      </span>
+    </label>
+  );
+}

@@ -14,13 +14,37 @@ import { FormButton } from "./form-button";
 import { DocsButton, type TemplateLite } from "./docs-button";
 import { ImportExportButton } from "./data-io";
 import { BoardUIProvider } from "./board-ui";
-import { createView, deleteView, pinView, type ViewConfig } from "@/app/actions/views";
+import {
+  createView,
+  deleteView,
+  pinView,
+  renameView,
+  reorderViews,
+  type ViewConfig,
+  type ViewType,
+} from "@/app/actions/views";
+import { BoardDashboard, type WidgetConfig, type ChartFilter } from "@/components/board/board-dashboard";
 
-type ViewMode = "table" | "kanban" | "calendar" | "chart";
+const VIEW_ICON: Record<string, string> = {
+  table: "▤",
+  kanban: "▥",
+  calendar: "▦",
+  chart: "📊",
+  dashboard: "▩",
+};
+
+const DEFAULT_VIEW_NAME: Record<ViewType, string> = {
+  table: "Table",
+  kanban: "Kanban",
+  calendar: "Calendar",
+  chart: "Chart",
+  dashboard: "Dashboard",
+};
 
 type SavedView = {
   id: string;
   name: string;
+  type: ViewType;
   isPinned: boolean;
   config: ViewConfig;
 };
@@ -122,15 +146,24 @@ export function BoardView({
   boardColumnsMap: Record<string, { id: string; name: string; type: string }[]>;
   readOnly: boolean;
 }) {
-  const [mode, setMode] = useState<ViewMode>("table");
   const [q, setQ] = useState("");
   const [addViewOpen, setAddViewOpen] = useState(false);
   const [formsSignal, setFormsSignal] = useState(0); // bumps to open the Forms builder
 
+  // Optimistically-added views (shown instantly before the server round-trip
+  // lands them in `views`). Merged and de-duped by id.
+  const [localViews, setLocalViews] = useState<SavedView[]>([]);
+  const allViews = useMemo(
+    () => [...views, ...localViews.filter((lv) => !views.some((v) => v.id === lv.id))],
+    [views, localViews]
+  );
+
   // Active saved view — default to the pinned one, else "Main".
-  const pinned = views.find((v) => v.isPinned);
+  const pinned = allViews.find((v) => v.isPinned);
   const [activeId, setActiveId] = useState<string>(pinned?.id ?? "main");
-  const active = views.find((v) => v.id === activeId);
+  const active = allViews.find((v) => v.id === activeId);
+  // The active view's type drives which view component renders. "Main" is table.
+  const activeType: ViewType = activeId === "main" ? "table" : active?.type ?? "table";
 
   const [hidden, setHidden] = useState<Set<string>>(
     new Set(pinned?.config.hiddenColumns ?? [])
@@ -153,9 +186,37 @@ export function BoardView({
 
   function selectView(id: string) {
     setActiveId(id);
-    const v = views.find((x) => x.id === id);
+    const v = allViews.find((x) => x.id === id);
     setHidden(new Set(v?.config.hiddenColumns ?? []));
     setFilters(v?.config.filters ?? []);
+  }
+
+  // Create a typed view tab. The tab appears instantly (optimistic local state
+  // with a client-generated id); the DB row is written in the background with
+  // the same id — no full board re-fetch, so there is no lag.
+  function addView(type: ViewType) {
+    setAddViewOpen(false);
+    const id = `v${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const optimistic: SavedView = {
+      id,
+      name: DEFAULT_VIEW_NAME[type],
+      type,
+      isPinned: false,
+      config: { hiddenColumns: [], filters: [], widgets: [] },
+    };
+    setLocalViews((l) => [...l, optimistic]);
+    setActiveId(id);
+    setHidden(new Set());
+    setFilters([]);
+    start(async () => {
+      try {
+        await createView(board.id, "", type, {}, id);
+      } catch {
+        // Roll back the optimistic tab if the save failed.
+        setLocalViews((l) => l.filter((v) => v.id !== id));
+        setActiveId((cur) => (cur === id ? "main" : cur));
+      }
+    });
   }
 
   const statusCols = board.columns.filter((c) => c.type === "status");
@@ -334,14 +395,30 @@ export function BoardView({
             </div>
           </div>
 
-          {/* View tabs */}
+          {/* View tabs — each is a persistent, typed view (Bug #3) */}
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
             <ViewTab active={activeId === "main"} onClick={() => selectView("main")}>
+              <span className="mr-1 opacity-60">{VIEW_ICON.table}</span>
               Main Table
             </ViewTab>
-            {views.map((v) => (
-              <ViewTab key={v.id} active={activeId === v.id} onClick={() => selectView(v.id)}>
+            {allViews.map((v) => (
+              <ViewTab
+                key={v.id}
+                active={activeId === v.id}
+                onClick={() => selectView(v.id)}
+                onDoubleClick={
+                  readOnly
+                    ? undefined
+                    : () => {
+                        const n = window.prompt("Rename view:", v.name);
+                        if (n && n.trim() && n.trim() !== v.name)
+                          start(() => void renameView(board.id, v.id, n.trim()));
+                      }
+                }
+                title={readOnly ? v.name : "Double-click to rename"}
+              >
                 {v.isPinned && <span className="mr-1">📌</span>}
+                <span className="mr-1 opacity-60">{VIEW_ICON[v.type] ?? "▤"}</span>
                 {v.name}
               </ViewTab>
             ))}
@@ -357,24 +434,52 @@ export function BoardView({
                 {addViewOpen && (
                   <>
                     <div className="fixed inset-0 z-20" onClick={() => setAddViewOpen(false)} />
-                    <div className="absolute left-0 z-30 mt-1 w-52 rounded-xl border border-hair bg-white p-1.5 shadow-pop">
+                    <div className="absolute left-0 z-30 mt-1 w-56 rounded-xl border border-hair bg-white p-1.5 shadow-pop">
                       <p className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
                         Add a view
                       </p>
-                      <AddViewItem icon="▤" label="Table" onClick={() => { setMode("table"); setAddViewOpen(false); }} />
-                      <AddViewItem icon="▥" label="Kanban" disabled={!hasStatus} hint={!hasStatus ? "needs a status column" : undefined} onClick={() => { setMode("kanban"); setAddViewOpen(false); }} />
-                      <AddViewItem icon="▦" label="Calendar" disabled={!hasDate} hint={!hasDate ? "needs a date column" : undefined} onClick={() => { setMode("calendar"); setAddViewOpen(false); }} />
-                      <AddViewItem icon="📊" label="Chart / Dashboard" onClick={() => { setMode("chart"); setAddViewOpen(false); }} />
-                      <AddViewItem icon="📝" label="Form" onClick={() => { setFormsSignal((s) => s + 1); setAddViewOpen(false); }} />
+                      <AddViewItem icon={VIEW_ICON.table} label="Table" onClick={() => addView("table")} />
+                      <AddViewItem icon={VIEW_ICON.kanban} label="Kanban" disabled={!hasStatus} hint={!hasStatus ? "needs status" : undefined} onClick={() => addView("kanban")} />
+                      <AddViewItem icon={VIEW_ICON.calendar} label="Calendar" disabled={!hasDate} hint={!hasDate ? "needs date" : undefined} onClick={() => addView("calendar")} />
+                      <AddViewItem icon={VIEW_ICON.chart} label="Chart" onClick={() => addView("chart")} />
+                      <AddViewItem icon={VIEW_ICON.dashboard} label="Dashboard" onClick={() => addView("dashboard")} />
                       <div className="my-1 border-t border-hair" />
-                      <AddViewItem icon="💾" label="Save current view…" onClick={() => { setSaving(true); setAddViewOpen(false); }} />
+                      <AddViewItem icon="📝" label="Form" onClick={() => { setFormsSignal((s) => s + 1); setAddViewOpen(false); }} />
                     </div>
                   </>
                 )}
               </div>
             )}
             {!readOnly && active && (
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-0.5">
+                <button
+                  onClick={() => {
+                    const idx = allViews.findIndex((v) => v.id === active.id);
+                    if (idx > 0) {
+                      const order = allViews.map((v) => v.id);
+                      [order[idx - 1], order[idx]] = [order[idx], order[idx - 1]];
+                      start(() => void reorderViews(board.id, order));
+                    }
+                  }}
+                  className="rounded px-1.5 py-1 text-xs text-muted hover:text-teal"
+                  title="Move left"
+                >
+                  ‹
+                </button>
+                <button
+                  onClick={() => {
+                    const idx = allViews.findIndex((v) => v.id === active.id);
+                    if (idx >= 0 && idx < allViews.length - 1) {
+                      const order = allViews.map((v) => v.id);
+                      [order[idx + 1], order[idx]] = [order[idx], order[idx + 1]];
+                      start(() => void reorderViews(board.id, order));
+                    }
+                  }}
+                  className="rounded px-1.5 py-1 text-xs text-muted hover:text-teal"
+                  title="Move right"
+                >
+                  ›
+                </button>
                 <button
                   onClick={() => start(() => void pinView(board.id, active.id, !active.isPinned))}
                   className="rounded-md px-2 py-1 text-xs text-muted hover:text-teal"
@@ -383,32 +488,21 @@ export function BoardView({
                 </button>
                 <button
                   onClick={() => {
-                    start(() => void deleteView(board.id, active.id));
-                    selectView("main");
+                    if (confirm(`Delete view "${active.name}"?`)) {
+                      start(() => void deleteView(board.id, active.id));
+                      selectView("main");
+                    }
                   }}
                   className="rounded-md px-2 py-1 text-xs text-muted hover:text-danger"
                 >
-                  Delete view
+                  Delete
                 </button>
               </div>
             )}
           </div>
 
-          {/* Toolbar */}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-lg border border-hair bg-canvas p-0.5">
-              <ModeTab active={mode === "table"} onClick={() => setMode("table")} icon="▤">Table</ModeTab>
-              <ModeTab active={mode === "kanban"} onClick={() => setMode("kanban")} icon="▥" disabled={!hasStatus}>
-                Kanban
-              </ModeTab>
-              <ModeTab active={mode === "calendar"} onClick={() => setMode("calendar")} icon="▦" disabled={!hasDate}>
-                Calendar
-              </ModeTab>
-              <ModeTab active={mode === "chart"} onClick={() => setMode("chart")} icon="📊">
-                Dashboard
-              </ModeTab>
-            </div>
-
+          {/* Toolbar — hidden for dashboard views (they use widgets) */}
+          <div className={`mt-3 flex-wrap items-center gap-2 ${activeType === "dashboard" ? "hidden" : "flex"}`}>
             {/* Columns control */}
             <Popover open={colsOpen} setOpen={setColsOpen} label={`Columns${hidden.size ? ` · ${hidden.size} hidden` : ""}`}>
               <p className="mb-1.5 text-xs font-semibold text-body">Show columns</p>
@@ -630,7 +724,7 @@ export function BoardView({
 
         {/* Body */}
         <div className="flex-1 overflow-auto scroll-thin">
-          {mode === "table" && (
+          {activeType === "table" && (
             <TableView
               board={view}
               people={people}
@@ -642,9 +736,22 @@ export function BoardView({
               pinFirst={pinFirst}
             />
           )}
-          {mode === "kanban" && <KanbanView board={view} people={people} readOnly={readOnly} />}
-          {mode === "calendar" && <CalendarView board={view} readOnly={readOnly} />}
-          {mode === "chart" && <ChartView board={view} people={people} />}
+          {activeType === "kanban" && <KanbanView board={view} people={people} readOnly={readOnly} />}
+          {activeType === "calendar" && <CalendarView board={view} readOnly={readOnly} />}
+          {activeType === "chart" && <ChartView board={view} people={people} />}
+          {activeType === "dashboard" && active && (
+            <BoardDashboard
+              key={active.id}
+              boardId={board.id}
+              viewId={active.id}
+              initialWidgets={(active.config.widgets as WidgetConfig[]) ?? []}
+              initialBoards={(active.config.dashBoards as string[]) ?? []}
+              initialFilters={(active.config.dashFilters as ChartFilter[]) ?? []}
+              board={view}
+              allBoards={allBoards}
+              readOnly={readOnly}
+            />
+          )}
         </div>
       </div>
 
@@ -653,7 +760,7 @@ export function BoardView({
           onClose={() => setSaving(false)}
           onSave={(name) => {
             start(() =>
-              void createView(board.id, name, { hiddenColumns: [...hidden], filters })
+              void createView(board.id, name, "table", { hiddenColumns: [...hidden], filters })
             );
             setSaving(false);
           }}
@@ -727,31 +834,28 @@ function BoardTitle({ boardId, name, readOnly }: { boardId: string; name: string
   );
 }
 
-function ViewTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function ViewTab({
+  active,
+  onClick,
+  onDoubleClick,
+  title,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  onDoubleClick?: () => void;
+  title?: string;
+  children: React.ReactNode;
+}) {
   return (
     <button
       onClick={onClick}
-      className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+      onDoubleClick={onDoubleClick}
+      title={title}
+      className={`inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition ${
         active ? "bg-teal/10 text-teal-deep" : "text-muted hover:bg-canvas hover:text-body"
       }`}
     >
-      {children}
-    </button>
-  );
-}
-
-function ModeTab({
-  active, onClick, icon, children, disabled,
-}: { active: boolean; onClick: () => void; icon: string; children: React.ReactNode; disabled?: boolean }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition ${
-        active ? "bg-white text-ink shadow-soft" : "text-muted hover:text-body disabled:opacity-40"
-      }`}
-    >
-      <span className="text-xs">{icon}</span>
       {children}
     </button>
   );

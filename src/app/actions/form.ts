@@ -58,11 +58,14 @@ export async function saveFormConfig(
 }
 
 // ── Multiple forms per board (create / edit / delete) ────────
+import type { FormAppearance } from "@/lib/board-types";
+
 type FormCfg = {
   columns?: string[];
   dedupeColumnId?: string | null;
   groupId?: string | null;
   welcomeMessage?: string;
+  appearance?: FormAppearance;
 };
 
 async function freshSlug(): Promise<string | undefined> {
