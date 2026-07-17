@@ -522,6 +522,12 @@ function PhoneCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
 
   const value = cell?.value;
   const disp = parsePhone(value);
+  // Displayed text is rebuilt from the dial code + digits so a country NAME can
+  // never appear in the column — even for legacy/imported values whose stored
+  // string contains the name (e.g. "Australia +61 412345678").
+  const shown = disp.dial
+    ? `${disp.dial} ${disp.local}`.trim()
+    : (value ?? "").replace(/[^\d+()\-. ]/g, "").trim();
   const current = countryByDial(dial);
   const filtered = DIAL_COUNTRIES.filter(
     ([code, , name]) =>
@@ -542,7 +548,7 @@ function PhoneCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
         {value ? (
           <>
             <span className="flex-none text-sm leading-none">{disp.flag}</span>
-            <span className="truncate text-xs text-body">{value}</span>
+            <span className="truncate text-xs text-body">{shown}</span>
           </>
         ) : (
           <span className="text-xs text-muted">{readOnly ? "" : "＋ Phone"}</span>
