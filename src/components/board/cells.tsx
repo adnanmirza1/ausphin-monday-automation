@@ -543,7 +543,7 @@ function PhoneCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
         disabled={readOnly}
         onClick={() => setOpen(true)}
         className="flex h-full w-full min-w-0 items-center justify-center gap-1.5 px-1.5"
-        title={value ? `${disp.name} · ${value}` : undefined}
+        title={value ? shown : undefined}
       >
         {value ? (
           <>
@@ -576,10 +576,10 @@ function PhoneCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
                         setQ("");
                       }}
                       className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-xs hover:bg-canvas"
+                      title={name}
                     >
                       <span className="text-sm">{flag}</span>
-                      <span className="flex-1 truncate text-body">{name}</span>
-                      <span className="text-muted">{code}</span>
+                      <span className="flex-1 font-medium text-body">{code}</span>
                     </button>
                   ))}
                   {filtered.length === 0 && (
@@ -593,10 +593,11 @@ function PhoneCell({ boardId, itemId, column, cell, readOnly }: Ctx) {
                 <button
                   onClick={() => setShowCountries(true)}
                   className="flex items-center gap-2 rounded-lg border border-hair px-2 py-1.5 text-left text-xs hover:border-teal/50"
+                  title={current.name}
                 >
                   <span className="text-sm">{current.flag}</span>
-                  <span className="flex-1 truncate text-body">{current.name}</span>
-                  <span className="text-muted">{dial} ▾</span>
+                  <span className="flex-1 font-medium text-body">{dial}</span>
+                  <span className="text-muted">▾</span>
                 </button>
                 {/* number */}
                 <div className="flex items-center gap-1.5 rounded-lg border border-hair px-2 py-1.5 focus-within:border-teal">
