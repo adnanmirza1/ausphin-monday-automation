@@ -497,27 +497,36 @@ function Row({
           onChange={(e) => setName(e.target.value)}
           onBlur={() => name !== item.name && start(() => void renameItem(board.id, item.id, name))}
           onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-          className={`flex-1 bg-transparent px-2.5 text-sm font-medium text-ink outline-none focus:bg-teal/5 ${ROW_PAD[rowHeight]}`}
+          className={`min-w-0 flex-1 bg-transparent px-2.5 text-sm font-medium text-ink outline-none focus:bg-teal/5 ${ROW_PAD[rowHeight]}`}
         />
-        <button
-          onClick={() => open({ id: item.id, name: item.name })}
-          className="mr-1 hidden h-6 w-6 flex-none place-items-center rounded-md text-muted hover:bg-teal/10 hover:text-teal group-hover:grid"
-          title="Open item"
+        {/* Row actions — reserved space (no reflow) + solid bg so they never
+            overlap the item name or spill into the next column. */}
+        <div
+          className="flex flex-none items-center gap-0.5 pr-1.5 pl-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100"
+          style={{ background: pinFirst ? tint ?? "#ffffff" : undefined }}
         >
-          ⤢
-        </button>
-        {!readOnly && (
           <button
-            onClick={() => {
-              if (confirm(`Delete "${item.name}"? This can't be undone.`))
-                start(() => void deleteItem(board.id, item.id));
-            }}
-            className="mr-1.5 hidden h-6 w-6 flex-none place-items-center rounded-md text-muted hover:bg-danger/10 hover:text-danger group-hover:grid"
-            title="Delete item"
+            onClick={() => open({ id: item.id, name: item.name })}
+            className="grid h-6 w-6 flex-none place-items-center rounded-md text-muted hover:bg-teal/10 hover:text-teal"
+            title="Open item"
+            aria-label="Open item"
           >
-            ✕
+            ⤢
           </button>
-        )}
+          {!readOnly && (
+            <button
+              onClick={() => {
+                if (confirm(`Delete "${item.name}"? This can't be undone.`))
+                  start(() => void deleteItem(board.id, item.id));
+              }}
+              className="grid h-6 w-6 flex-none place-items-center rounded-md text-muted hover:bg-danger/10 hover:text-danger"
+              title="Delete item"
+              aria-label="Delete item"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
       {board.columns.map((c) => (

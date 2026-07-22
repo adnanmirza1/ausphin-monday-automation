@@ -12,13 +12,19 @@ import type { StatusLabel } from "@/lib/constants";
 export type DashRow = { boardId: string; text: Record<string, string>; num: Record<string, number> };
 export type DashColumn = { name: string; type: string };
 export type DashBoardMeta = { id: string; name: string; columns: DashColumn[] };
-export type DashData = { boards: DashBoardMeta[]; columns: DashColumn[]; rows: DashRow[] };
+export type DashPerson = { color: string; avatarUrl?: string; initials: string };
+export type DashData = {
+  boards: DashBoardMeta[];
+  columns: DashColumn[];
+  rows: DashRow[];
+  people: Record<string, DashPerson>; // person display name -> avatar info
+};
 
 export async function getDashboardRows(boardIds: string[]): Promise<DashData> {
   const user = await requireUser();
   const allowed = allowedBoardIds(user);
   const ids = [...new Set(boardIds)].filter((id) => !allowed || allowed.includes(id));
-  if (ids.length === 0) return { boards: [], columns: [], rows: [] };
+  if (ids.length === 0) return { boards: [], columns: [], rows: [], people: {} };
 
   const boards = await db.board.findMany({
     where: { id: { in: ids }, environment: { orgId: user.orgId } },
@@ -32,6 +38,8 @@ export async function getDashboardRows(boardIds: string[]): Promise<DashData> {
   const colTypes = new Map<string, string>(); // union column name -> type
   const boardsMeta: DashBoardMeta[] = [];
   const rows: DashRow[] = [];
+  const people: Record<string, DashPerson> = {}; // person name -> avatar info
+  const initialsOf = (n: string) => n.split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
 
   // Pseudo-columns always available for grouping/filtering.
   const PSEUDO: DashColumn[] = [
@@ -71,6 +79,13 @@ export async function getDashboardRows(boardIds: string[]): Promise<DashData> {
           }
         } else if (col.type === "person") {
           v = cell.person?.name ?? "";
+          if (cell.person && !people[v]) {
+            people[v] = {
+              color: cell.person.avatarColor,
+              avatarUrl: cell.person.avatarUrl ?? undefined,
+              initials: initialsOf(cell.person.name),
+            };
+          }
         } else if (col.type === "url") {
           v = urlDisplay(cell.value);
         } else if (col.type === "file") {
@@ -92,5 +107,5 @@ export async function getDashboardRows(boardIds: string[]): Promise<DashData> {
     { name: "Name", type: "text" },
     ...[...colTypes].map(([name, type]) => ({ name, type })),
   ];
-  return { boards: boardsMeta, columns, rows };
+  return { boards: boardsMeta, columns, rows, people };
 }

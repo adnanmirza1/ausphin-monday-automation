@@ -391,8 +391,11 @@ model EmailMessage {
   status    String   @default("sent")
   fromEmail String   @default("")
   toEmail   String   @default("")
+  ccEmail   String   @default("")
+  bccEmail  String   @default("")
   subject   String   @default("")
   body      String   @default("")
+  attachments String @default("[]") // JSON array of { name } (filenames only)
   authorId  String? // team member who sent/logged it
   createdAt DateTime @default(now())
 

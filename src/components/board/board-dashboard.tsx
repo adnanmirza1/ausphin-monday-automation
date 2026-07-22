@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { BoardData } from "@/lib/board-types";
 import { PALETTE } from "@/lib/constants";
 import { updateViewConfig } from "@/app/actions/views";
-import { getDashboardRows, type DashData } from "@/app/actions/dashboard";
+import { getDashboardRows, type DashData, type DashPerson } from "@/app/actions/dashboard";
+import { toPng, toJpeg } from "html-to-image";
 
 // ── Widget configuration (persisted in the dashboard view's config JSON) ──────
 export type ChartType = "bar" | "column" | "line" | "area" | "pie" | "donut" | "bubble";
@@ -24,8 +25,28 @@ function aggregate(values: number[], count: number, agg: YAgg): number {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-// A single filter clause. op "is" = equality; op "between" = date range (value..value2).
-export type ChartFilter = { column: string; op?: "is" | "between"; value: string; value2?: string };
+// Filter operators (monday-style). Relative ops (in_next/in_last) evaluate
+// against the current date, so they update automatically over time.
+export type FilterOp =
+  | "is"
+  | "is_not"
+  | "after"
+  | "on_or_after"
+  | "before"
+  | "on_or_before"
+  | "between"
+  | "in_next"
+  | "in_last"
+  | "empty"
+  | "not_empty"
+  | "is_only"
+  | "anything";
+
+// A single filter clause. `value`/`value2` meaning depends on `op`.
+export type ChartFilter = { column: string; op?: FilterOp; value?: string; value2?: string };
+
+const isoToday = () => new Date().toISOString().slice(0, 10);
+const isoAddDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
 
 export type WidgetConfig = {
   id: string;
@@ -364,6 +385,8 @@ function WidgetShell({
 }) {
   const isChart = widget.type === "chart";
   const [menu, setMenu] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
   function rename() {
     const n = window.prompt("Rename widget:", widget.title ?? "");
     if (n && n.trim()) onRename(n.trim());
@@ -372,8 +395,26 @@ function WidgetShell({
     setMenu(false);
     fn?.();
   };
+  // Export the whole card (title + chart + legend + values) to a high-res image.
+  async function exportImage(fmt: "png" | "jpeg") {
+    const node = cardRef.current;
+    if (!node) return;
+    setExporting(true);
+    try {
+      const opts = { pixelRatio: 3, backgroundColor: "#ffffff", cacheBust: true };
+      const dataUrl = fmt === "png" ? await toPng(node, opts) : await toJpeg(node, { ...opts, quality: 0.95 });
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = `${(widget.title ?? "widget").replace(/[^\w]+/g, "-")}.${fmt === "png" ? "png" : "jpg"}`;
+      a.click();
+    } catch (e) {
+      console.error("[chart-export]", e);
+    } finally {
+      setExporting(false);
+    }
+  }
   return (
-    <div className={`rounded-xl border border-hair bg-white p-4 shadow-soft ${isChart ? "lg:col-span-2" : ""}`}>
+    <div ref={cardRef} className={`rounded-xl border border-hair bg-white p-4 shadow-soft ${isChart ? "lg:col-span-2" : ""}`}>
       <div className="mb-3 flex items-center justify-between gap-2">
         <h3 className="min-w-0 truncate text-sm font-bold text-ink">{widget.title ?? "Widget"}</h3>
         <div className="relative flex-none">
@@ -394,7 +435,10 @@ function WidgetShell({
                 {!readOnly && <MenuRow icon="✎" label="Rename" onClick={act(rename)} />}
                 {!readOnly && <MenuRow icon="⧉" label="Duplicate" onClick={act(onDuplicate)} />}
                 <MenuRow icon="⊟" label="Dock this widget" disabled />
-                {onExport && <MenuRow icon="⬇" label="Export" onClick={act(onExport)} />}
+                <div className="my-1 border-t border-hair" />
+                <MenuRow icon="🖼" label={exporting ? "Exporting…" : "Export as PNG"} onClick={() => { setMenu(false); void exportImage("png"); }} />
+                <MenuRow icon="🖼" label="Export as JPEG" onClick={() => { setMenu(false); void exportImage("jpeg"); }} />
+                {onExport && <MenuRow icon="⬇" label="Export data (CSV)" onClick={act(onExport)} />}
                 {!readOnly && (onLeft || onRight) && <div className="my-1 border-t border-hair" />}
                 {!readOnly && onLeft && <MenuRow icon="←" label="Move left" onClick={act(onLeft)} />}
                 {!readOnly && onRight && <MenuRow icon="→" label="Move right" onClick={act(onRight)} />}
@@ -451,15 +495,49 @@ type ChartDraft = Pick<
   "chartType" | "boardIds" | "xColumn" | "groupBy" | "yAgg" | "yColumn" | "filters" | "boardFilters"
 >;
 
+function passOne(v: string, f: ChartFilter): boolean {
+  const val = f.value ?? "";
+  const val2 = f.value2 ?? "";
+  switch (f.op ?? "is") {
+    case "anything":
+      return true;
+    case "empty":
+      return v === "";
+    case "not_empty":
+      return v !== "";
+    case "is":
+    case "is_only":
+      return v === val;
+    case "is_not":
+      return v !== val;
+    case "after":
+      return v !== "" && v > val;
+    case "on_or_after":
+      return v !== "" && v >= val;
+    case "before":
+      return v !== "" && v < val;
+    case "on_or_before":
+      return v !== "" && v <= val;
+    case "between":
+      return v !== "" && (!val || v >= val) && (!val2 || v <= val2);
+    case "in_next": {
+      if (v === "") return false;
+      const days = Number(val) || 0;
+      return v >= isoToday() && v <= isoAddDays(days);
+    }
+    case "in_last": {
+      if (v === "") return false;
+      const days = Number(val) || 0;
+      return v >= isoAddDays(-days) && v <= isoToday();
+    }
+    default:
+      return true;
+  }
+}
+
 function rowsPass(text: Record<string, string>, filters: ChartFilter[] | undefined): boolean {
   for (const f of filters ?? []) {
-    const v = text[f.column] ?? "";
-    if (f.op === "between") {
-      if (f.value && v < f.value) return false;
-      if (f.value2 && v > f.value2) return false;
-    } else if (v !== f.value) {
-      return false;
-    }
+    if (!passOne(text[f.column] ?? "", f)) return false;
   }
   return true;
 }
@@ -621,7 +699,15 @@ function ChartWidget({
       ) : !hasData ? (
         <EmptyChart hint="No results were found. Check your settings & filters." />
       ) : (
-        <ChartCanvas type={chartType} model={model} large={large} yLabel={yAgg === "count" ? "Count" : yAgg} />
+        <ChartCanvas
+          type={chartType}
+          model={model}
+          large={large}
+          yLabel={yAgg === "count" ? "Count" : yAgg}
+          people={
+            data?.columns.find((c) => c.name === xColumn)?.type === "person" ? data.people : undefined
+          }
+        />
       )}
     </div>
   );
@@ -790,7 +876,47 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-// Reusable filter editor — equality for most columns, date-range for date columns.
+// Operator sets. Date columns get monday's full set; others get the common ones.
+const OP_LABEL: Record<FilterOp, string> = {
+  is: "Is",
+  is_not: "Is not",
+  in_next: "In the next",
+  in_last: "In the last",
+  between: "Is between",
+  on_or_after: "Is on or after",
+  after: "Is after",
+  on_or_before: "Is on or before",
+  before: "Is before",
+  empty: "Is empty",
+  not_empty: "Is not empty",
+  is_only: "Is only",
+  anything: "Is anything",
+};
+const DATE_OPS: FilterOp[] = [
+  "is", "is_not", "in_next", "in_last", "between", "on_or_after", "after",
+  "on_or_before", "before", "empty", "not_empty", "is_only", "anything",
+];
+const TEXT_OPS: FilterOp[] = ["is", "is_not", "empty", "not_empty", "anything"];
+
+// Which inputs an operator needs.
+function inputKind(op: FilterOp, isDate: boolean): "none" | "one" | "two" | "days" {
+  if (op === "empty" || op === "not_empty" || op === "anything") return "none";
+  if (op === "between") return "two";
+  if (op === "in_next" || op === "in_last") return "days";
+  void isDate;
+  return "one";
+}
+
+function filterLabel(f: ChartFilter): string {
+  const op = f.op ?? "is";
+  const lbl = OP_LABEL[op];
+  if (op === "empty" || op === "not_empty" || op === "anything") return `${f.column} · ${lbl}`;
+  if (op === "between") return `${f.column} · ${lbl} ${f.value || "…"}–${f.value2 || "…"}`;
+  if (op === "in_next" || op === "in_last") return `${f.column} · ${lbl} ${f.value || "0"} days`;
+  return `${f.column} · ${lbl} ${f.value ?? ""}`;
+}
+
+// Reusable filter editor — dynamic operator + inputs (monday-style date operators).
 function FilterEditor({
   columns,
   rows,
@@ -803,10 +929,18 @@ function FilterEditor({
   onChange: (f: ChartFilter[]) => void;
 }) {
   const [col, setCol] = useState(columns[0]?.name ?? "");
-  const [v1, setV1] = useState("");
-  const [v2, setV2] = useState("");
   const colType = columns.find((c) => c.name === col)?.type ?? "text";
   const isDate = colType === "date";
+  const ops = isDate ? DATE_OPS : TEXT_OPS;
+  const [op, setOp] = useState<FilterOp>("is");
+  const [v1, setV1] = useState("");
+  const [v2, setV2] = useState("");
+
+  // Keep the operator valid when the column type changes.
+  const opValid = ops.includes(op);
+  const effectiveOp = opValid ? op : ops[0];
+  const kind = inputKind(effectiveOp, isDate);
+
   const distinct = useMemo(() => {
     const s = new Set<string>();
     for (const r of rows) if (r[col]) s.add(r[col]);
@@ -815,13 +949,16 @@ function FilterEditor({
 
   function add() {
     if (!col) return;
-    if (isDate) {
-      if (!v1 && !v2) return;
-      onChange([...value, { column: col, op: "between", value: v1, value2: v2 }]);
-    } else {
-      if (!v1.trim()) return;
-      onChange([...value, { column: col, op: "is", value: v1.trim() }]);
+    if (kind === "one" && !v1.trim()) return;
+    if (kind === "days" && !v1.trim()) return;
+    if (kind === "two" && !v1 && !v2) return;
+    const f: ChartFilter = { column: col, op: effectiveOp };
+    if (kind === "one" || kind === "days") f.value = v1.trim();
+    if (kind === "two") {
+      f.value = v1;
+      f.value2 = v2;
     }
+    onChange([...value, f]);
     setV1("");
     setV2("");
   }
@@ -833,32 +970,56 @@ function FilterEditor({
         <div className="mb-1.5 flex flex-wrap gap-1.5">
           {value.map((f, i) => (
             <span key={i} className="inline-flex items-center gap-1 rounded-full bg-teal/10 px-2 py-0.5 text-[11px] text-teal-deep">
-              {f.op === "between" ? `${f.column}: ${f.value || "…"} → ${f.value2 || "…"}` : `${f.column} = ${f.value}`}
+              {filterLabel(f)}
               <button onClick={() => onChange(value.filter((_, idx) => idx !== i))} className="hover:text-danger">✕</button>
             </span>
           ))}
         </div>
       )}
       <div className="flex flex-wrap items-center gap-1.5">
-        <select className={`${selCls} min-w-[110px] flex-1`} value={col} onChange={(e) => setCol(e.target.value)}>
+        <select
+          className={`${selCls} min-w-[96px] flex-1`}
+          value={col}
+          onChange={(e) => {
+            setCol(e.target.value);
+            setV1("");
+            setV2("");
+          }}
+        >
           {columns.map((c) => (
             <option key={c.name} value={c.name}>{c.name}</option>
           ))}
         </select>
-        {isDate ? (
+        <select className={`${selCls} min-w-[92px] flex-1`} value={effectiveOp} onChange={(e) => setOp(e.target.value as FilterOp)}>
+          {ops.map((o) => (
+            <option key={o} value={o}>{OP_LABEL[o]}</option>
+          ))}
+        </select>
+        {/* Dynamic value input(s) by operator */}
+        {kind === "days" && (
+          <span className="flex flex-1 items-center gap-1">
+            <input type="number" min={0} className={`${selCls} w-16`} value={v1} onChange={(e) => setV1(e.target.value)} placeholder="N" />
+            <span className="text-[11px] text-muted">days</span>
+          </span>
+        )}
+        {kind === "one" &&
+          (isDate ? (
+            <input type="date" className={`${selCls} flex-1`} value={v1} onChange={(e) => setV1(e.target.value)} />
+          ) : (
+            <>
+              <input className={`${selCls} flex-1`} list={listId} value={v1} onChange={(e) => setV1(e.target.value)} placeholder="value" />
+              <datalist id={listId}>
+                {distinct.map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
+            </>
+          ))}
+        {kind === "two" && (
           <>
             <input type="date" className={`${selCls} flex-1`} value={v1} onChange={(e) => setV1(e.target.value)} />
             <span className="text-[11px] text-muted">→</span>
             <input type="date" className={`${selCls} flex-1`} value={v2} onChange={(e) => setV2(e.target.value)} />
-          </>
-        ) : (
-          <>
-            <input className={`${selCls} flex-1`} list={listId} value={v1} onChange={(e) => setV1(e.target.value)} placeholder="equals value" />
-            <datalist id={listId}>
-              {distinct.map((d) => (
-                <option key={d} value={d} />
-              ))}
-            </datalist>
           </>
         )}
         <button onClick={add} className="flex-none rounded-lg bg-teal px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-deep">
@@ -900,30 +1061,59 @@ function niceMax(m: number): number {
   return step * pow;
 }
 
+type People = Record<string, DashPerson>;
+
+// SVG axis avatar: profile photo (clipped circle) or a coloured initials circle.
+function AxisAvatar({ cx, cy, r, person }: { cx: number; cy: number; r: number; person?: DashPerson }) {
+  const clip = `clip-${cx}-${cy}`;
+  if (person?.avatarUrl) {
+    return (
+      <g>
+        <clipPath id={clip}>
+          <circle cx={cx} cy={cy} r={r} />
+        </clipPath>
+        <image href={person.avatarUrl} x={cx - r} y={cy - r} width={r * 2} height={r * 2} clipPath={`url(#${clip})`} preserveAspectRatio="xMidYMid slice" />
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--color-hair)" />
+      </g>
+    );
+  }
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={r} fill={person?.color ?? "#8792A2"} />
+      <text x={cx} y={cy + 3} textAnchor="middle" style={{ fontSize: r * 0.8, fontWeight: 700 }} className="fill-white">
+        {person?.initials ?? "•"}
+      </text>
+    </g>
+  );
+}
+
 function ChartCanvas({
   type,
   model,
   large,
   yLabel,
+  people,
 }: {
   type: ChartType;
   model: ChartModel;
   large?: boolean;
   yLabel: string;
+  people?: People;
 }) {
   const totals = model.categories.map((_, ci) => model.matrix[ci].reduce((s, v) => s + v, 0));
   if (type === "pie" || type === "donut") return <PieChart model={model} donut={type === "donut"} totals={totals} />;
-  if (type === "bar") return <StackedBar model={model} totals={totals} large={large} />;
+  if (type === "bar") return <StackedBar model={model} totals={totals} large={large} people={people} />;
   if (type === "line" || type === "area") return <LineChart model={model} area={type === "area"} large={large} yLabel={yLabel} />;
   if (type === "bubble") return <BubbleChart model={model} totals={totals} large={large} />;
-  return <StackedColumn model={model} totals={totals} large={large} yLabel={yLabel} />;
+  return <StackedColumn model={model} totals={totals} large={large} yLabel={yLabel} people={people} />;
 }
 
-function StackedColumn({ model, totals, large, yLabel }: { model: ChartModel; totals: number[]; large?: boolean; yLabel: string }) {
+function StackedColumn({ model, totals, large, yLabel, people }: { model: ChartModel; totals: number[]; large?: boolean; yLabel: string; people?: People }) {
   const max = niceMax(Math.max(1, ...totals));
   const cats = model.categories;
   const band = 58; // px per category
-  const padL = 40, padT = 16, padB = 64;
+  const padL = 40, padT = 16;
+  const padB = people ? 78 : 64; // extra room for avatar + name
   const plotH = (large ? 360 : 240) - padT - padB;
   const h = plotH + padT + padB;
   const w = Math.max(560, padL + cats.length * band + 12);
@@ -979,16 +1169,25 @@ function StackedColumn({ model, totals, large, yLabel }: { model: ChartModel; to
                     {totals[ci]}
                   </text>
                 )}
-                <text
-                  x={cx}
-                  y={h - padB + 12}
-                  textAnchor={longLabels ? "end" : "middle"}
-                  transform={longLabels ? `rotate(-35 ${cx} ${h - padB + 12})` : undefined}
-                  style={{ fontSize: 9 }}
-                  className="fill-muted"
-                >
-                  {trunc(cat, 16)}
-                </text>
+                {people ? (
+                  <>
+                    <AxisAvatar cx={cx} cy={h - padB + 16} r={11} person={people[cat]} />
+                    <text x={cx} y={h - padB + 38} textAnchor="middle" style={{ fontSize: 8 }} className="fill-muted">
+                      {trunc(cat, 10)}
+                    </text>
+                  </>
+                ) : (
+                  <text
+                    x={cx}
+                    y={h - padB + 12}
+                    textAnchor={longLabels ? "end" : "middle"}
+                    transform={longLabels ? `rotate(-35 ${cx} ${h - padB + 12})` : undefined}
+                    style={{ fontSize: 9 }}
+                    className="fill-muted"
+                  >
+                    {trunc(cat, 16)}
+                  </text>
+                )}
               </g>
             );
           })}
@@ -1004,14 +1203,28 @@ function StackedColumn({ model, totals, large, yLabel }: { model: ChartModel; to
   );
 }
 
-function StackedBar({ model, totals, large }: { model: ChartModel; totals: number[]; large?: boolean }) {
+function StackedBar({ model, totals, large, people }: { model: ChartModel; totals: number[]; large?: boolean; people?: People }) {
   const max = Math.max(1, ...totals);
   return (
     <div>
       <div className={`flex flex-col gap-2 overflow-y-auto ${large ? "max-h-[360px]" : "max-h-64"}`}>
         {model.categories.map((cat, ci) => (
           <div key={ci} className="flex items-center gap-3">
-            <span className="w-28 flex-none truncate text-xs text-body" title={cat}>{cat}</span>
+            <span className="flex w-28 flex-none items-center gap-1.5 truncate text-xs text-body" title={cat}>
+              {people &&
+                (people[cat]?.avatarUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={people[cat]!.avatarUrl} alt="" className="h-5 w-5 flex-none rounded-full object-cover" />
+                ) : (
+                  <span
+                    className="grid h-5 w-5 flex-none place-items-center rounded-full text-[8px] font-bold text-white"
+                    style={{ background: people[cat]?.color ?? "#8792A2" }}
+                  >
+                    {people[cat]?.initials ?? "•"}
+                  </span>
+                ))}
+              <span className="truncate">{cat}</span>
+            </span>
             <div className="flex h-5 flex-1 overflow-hidden rounded-md bg-canvas" style={{ width: `${(totals[ci] / max) * 100}%`, minWidth: 24 }}>
               {model.series.map((s, si) => {
                 const v = model.matrix[ci][si];
