@@ -42,11 +42,22 @@ export type FilterOp =
   | "is_only"
   | "anything";
 
+export type RelUnit = "days" | "weeks" | "months" | "years";
+
 // A single filter clause. `value`/`value2` meaning depends on `op`.
-export type ChartFilter = { column: string; op?: FilterOp; value?: string; value2?: string };
+// For in_next/in_last: `value` = N, `unit` = days|weeks|months|years.
+export type ChartFilter = { column: string; op?: FilterOp; value?: string; value2?: string; unit?: RelUnit };
 
 const isoToday = () => new Date().toISOString().slice(0, 10);
-const isoAddDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+// Shift today by n of the given unit (calendar-correct for months/years).
+function isoShift(n: number, unit: RelUnit = "days"): string {
+  const d = new Date();
+  if (unit === "weeks") d.setDate(d.getDate() + n * 7);
+  else if (unit === "months") d.setMonth(d.getMonth() + n);
+  else if (unit === "years") d.setFullYear(d.getFullYear() + n);
+  else d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
 
 export type WidgetConfig = {
   id: string;
@@ -522,13 +533,13 @@ function passOne(v: string, f: ChartFilter): boolean {
       return v !== "" && (!val || v >= val) && (!val2 || v <= val2);
     case "in_next": {
       if (v === "") return false;
-      const days = Number(val) || 0;
-      return v >= isoToday() && v <= isoAddDays(days);
+      const n = Number(val) || 0;
+      return v >= isoToday() && v <= isoShift(n, f.unit);
     }
     case "in_last": {
       if (v === "") return false;
-      const days = Number(val) || 0;
-      return v >= isoAddDays(-days) && v <= isoToday();
+      const n = Number(val) || 0;
+      return v >= isoShift(-n, f.unit) && v <= isoToday();
     }
     default:
       return true;
@@ -912,7 +923,7 @@ function filterLabel(f: ChartFilter): string {
   const lbl = OP_LABEL[op];
   if (op === "empty" || op === "not_empty" || op === "anything") return `${f.column} · ${lbl}`;
   if (op === "between") return `${f.column} · ${lbl} ${f.value || "…"}–${f.value2 || "…"}`;
-  if (op === "in_next" || op === "in_last") return `${f.column} · ${lbl} ${f.value || "0"} days`;
+  if (op === "in_next" || op === "in_last") return `${f.column} · ${lbl} ${f.value || "0"} ${f.unit ?? "days"}`;
   return `${f.column} · ${lbl} ${f.value ?? ""}`;
 }
 
@@ -935,6 +946,7 @@ function FilterEditor({
   const [op, setOp] = useState<FilterOp>("is");
   const [v1, setV1] = useState("");
   const [v2, setV2] = useState("");
+  const [unit, setUnit] = useState<RelUnit>("days");
 
   // Keep the operator valid when the column type changes.
   const opValid = ops.includes(op);
@@ -953,7 +965,11 @@ function FilterEditor({
     if (kind === "days" && !v1.trim()) return;
     if (kind === "two" && !v1 && !v2) return;
     const f: ChartFilter = { column: col, op: effectiveOp };
-    if (kind === "one" || kind === "days") f.value = v1.trim();
+    if (kind === "one") f.value = v1.trim();
+    if (kind === "days") {
+      f.value = v1.trim();
+      f.unit = unit;
+    }
     if (kind === "two") {
       f.value = v1;
       f.value2 = v2;
@@ -999,7 +1015,12 @@ function FilterEditor({
         {kind === "days" && (
           <span className="flex flex-1 items-center gap-1">
             <input type="number" min={0} className={`${selCls} w-16`} value={v1} onChange={(e) => setV1(e.target.value)} placeholder="N" />
-            <span className="text-[11px] text-muted">days</span>
+            <select className={`${selCls} flex-1`} value={unit} onChange={(e) => setUnit(e.target.value as RelUnit)}>
+              <option value="days">days</option>
+              <option value="weeks">weeks</option>
+              <option value="months">months</option>
+              <option value="years">years</option>
+            </select>
           </span>
         )}
         {kind === "one" &&

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { permsOf } from "@/lib/guard";
+import { SenderSettings } from "./sender-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -113,6 +114,8 @@ export default async function SettingsPage() {
             </div>
           ))}
         </div>
+
+        <SenderSettings smtpFrom={env.SMTP_FROM ?? null} />
 
         <p className="mt-4 text-xs text-muted">
           Tip: set these in <code className="font-mono">.env</code> (dev) or your host's

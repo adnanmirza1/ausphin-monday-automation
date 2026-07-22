@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireEditor, requireUser } from "@/lib/guard";
+import { requireAdmin, requireEditor, requireUser } from "@/lib/guard";
 import { sendMail, mailerConfigured } from "@/lib/mailer";
 
 export type EmailAttachment = { name: string; type?: string; dataUrl: string };
@@ -30,14 +30,77 @@ export type SendEmailResult = {
   error?: string; // delivery error (when configured but send failed)
 };
 
-// Authorized "From" addresses for the composer: the signed-in user's own email
-// plus the org's configured sender. Real delivery still routes through the one
-// configured SMTP account (a provider may rewrite From unless it's a verified
-// send-as alias) — the dropdown selects which address is presented.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Parse the org's stored approved-senders JSON into a clean address list.
+function parseSenders(raw: string | null | undefined): string[] {
+  try {
+    const arr = JSON.parse(raw ?? "[]");
+    if (!Array.isArray(arr)) return [];
+    return arr.map((s) => String(s).trim().toLowerCase()).filter((s) => EMAIL_RE.test(s));
+  } catch {
+    return [];
+  }
+}
+
+// Authorized "From" addresses for the composer's dropdown (Requirement #1):
+// the signed-in user's own email + every address an admin approved for the org
+// (configured once under Settings) + the environment SMTP_FROM as a fallback.
+// Real delivery routes through the configured SMTP account; addresses on the
+// same domain are sent as-is, while a provider may rewrite a foreign address
+// unless it's a verified send-as alias.
 export async function getEmailSenders(): Promise<string[]> {
   const user = await requireUser();
-  const list = [user.email, process.env.SMTP_FROM].filter((s): s is string => !!s);
-  return [...new Set(list)];
+  const org = await db.organization.findUnique({
+    where: { id: user.orgId },
+    select: { emailSenders: true },
+  });
+  const list = [
+    user.email,
+    ...parseSenders(org?.emailSenders),
+    process.env.SMTP_FROM,
+  ].filter((s): s is string => !!s);
+  // De-dupe case-insensitively while preserving order (user email first).
+  const seen = new Set<string>();
+  return list.filter((s) => {
+    const k = s.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+// Admin: the org's configured approved-sender addresses (for the Settings UI).
+export async function getOrgSenders(): Promise<string[]> {
+  const user = await requireAdmin();
+  const org = await db.organization.findUnique({
+    where: { id: user.orgId },
+    select: { emailSenders: true },
+  });
+  return parseSenders(org?.emailSenders);
+}
+
+// Admin: replace the org's approved-sender list. Validates + de-dupes; returns
+// the normalized list that was saved (or an error to show in the UI).
+export async function setOrgSenders(
+  addresses: string[]
+): Promise<{ ok: boolean; senders?: string[]; error?: string }> {
+  const user = await requireAdmin();
+  const seen = new Set<string>();
+  const clean: string[] = [];
+  for (const raw of addresses) {
+    const a = String(raw).trim().toLowerCase();
+    if (!a) continue;
+    if (!EMAIL_RE.test(a)) return { ok: false, error: `"${raw}" is not a valid email address.` };
+    if (seen.has(a)) continue;
+    seen.add(a);
+    clean.push(a);
+  }
+  await db.organization.update({
+    where: { id: user.orgId },
+    data: { emailSenders: JSON.stringify(clean) },
+  });
+  return { ok: true, senders: clean };
 }
 
 function mapRow(r: {

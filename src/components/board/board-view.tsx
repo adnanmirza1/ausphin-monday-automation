@@ -8,7 +8,6 @@ import { renameBoard, archiveBoard, sortItemsByColumn } from "@/app/actions/boar
 import { TableView, type RowHeight } from "./table-view";
 import { KanbanView } from "./kanban-view";
 import { CalendarView } from "./calendar-view";
-import { ChartView } from "./chart-view";
 import { AddColumnButton } from "./add-column";
 import { FormButton } from "./form-button";
 import { DocsButton, type TemplateLite } from "./docs-button";
@@ -441,7 +440,6 @@ export function BoardView({
                       <AddViewItem icon={VIEW_ICON.table} label="Table" onClick={() => addView("table")} />
                       <AddViewItem icon={VIEW_ICON.kanban} label="Kanban" disabled={!hasStatus} hint={!hasStatus ? "needs status" : undefined} onClick={() => addView("kanban")} />
                       <AddViewItem icon={VIEW_ICON.calendar} label="Calendar" disabled={!hasDate} hint={!hasDate ? "needs date" : undefined} onClick={() => addView("calendar")} />
-                      <AddViewItem icon={VIEW_ICON.chart} label="Chart" onClick={() => addView("chart")} />
                       <AddViewItem icon={VIEW_ICON.dashboard} label="Dashboard" onClick={() => addView("dashboard")} />
                       <div className="my-1 border-t border-hair" />
                       <AddViewItem icon="📝" label="Form" onClick={() => { setFormsSignal((s) => s + 1); setAddViewOpen(false); }} />
@@ -738,8 +736,9 @@ export function BoardView({
           )}
           {activeType === "kanban" && <KanbanView board={view} people={people} readOnly={readOnly} />}
           {activeType === "calendar" && <CalendarView board={view} readOnly={readOnly} />}
-          {activeType === "chart" && <ChartView board={view} people={people} />}
-          {activeType === "dashboard" && active && (
+          {/* Charts live only in the Dashboard surface now — legacy "chart" views
+              render as a dashboard so there aren't multiple look-alike chart screens. */}
+          {(activeType === "dashboard" || activeType === "chart") && active && (
             <BoardDashboard
               key={active.id}
               boardId={board.id}

@@ -80,7 +80,19 @@ export function EmailComposer({
     setErr(null);
     setMsg(null);
     start(async () => {
-      const res = await sendItemEmail(boardId, itemId, { from, to, cc, bcc, subject, body, attachments });
+      let res;
+      try {
+        res = await sendItemEmail(boardId, itemId, { from, to, cc, bcc, subject, body, attachments });
+      } catch (e) {
+        // e.g. a read-only role rejected by the server action — surface it
+        // instead of hanging on "Sending…".
+        setErr(
+          /read-only|permission|not authenticated/i.test(String(e))
+            ? "You don't have permission to send email from this account."
+            : "Something went wrong sending the email. Please try again."
+        );
+        return;
+      }
       if (!res.ok) {
         setErr(res.error ?? "Could not send.");
         return;

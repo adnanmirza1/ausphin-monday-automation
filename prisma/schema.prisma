@@ -16,6 +16,10 @@ datasource db {
 model Organization {
   id        String   @id @default(cuid())
   name      String
+  // Approved "From" addresses an admin configures once (Requirement #1). JSON
+  // array of email strings; the composer's From dropdown is built from these
+  // plus the signed-in user's own email.
+  emailSenders String @default("[]")
   createdAt DateTime @default(now())
 
   users        User[]
