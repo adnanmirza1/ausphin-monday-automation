@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireAdmin, requireEditor, requireUser } from "@/lib/guard";
-import { sendMail, mailerConfigured } from "@/lib/mailer";
+import { sendMail, mailerConfigured, type MailOAuth } from "@/lib/mailer";
+import { googleOAuthConfigured, refreshAccessToken } from "@/lib/google-oauth";
 
 export type EmailAttachment = { name: string; type?: string; dataUrl: string };
 
@@ -51,12 +52,20 @@ function parseSenders(raw: string | null | undefined): string[] {
 // unless it's a verified send-as alias.
 export async function getEmailSenders(): Promise<string[]> {
   const user = await requireUser();
-  const org = await db.organization.findUnique({
-    where: { id: user.orgId },
-    select: { emailSenders: true },
-  });
+  const [org, connected] = await Promise.all([
+    db.organization.findUnique({
+      where: { id: user.orgId },
+      select: { emailSenders: true },
+    }),
+    db.connectedEmailAccount.findMany({
+      where: { orgId: user.orgId },
+      select: { email: true },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
   const list = [
     user.email,
+    ...connected.map((c) => c.email),
     ...parseSenders(org?.emailSenders),
     process.env.SMTP_FROM,
   ].filter((s): s is string => !!s);
@@ -101,6 +110,71 @@ export async function setOrgSenders(
     data: { emailSenders: JSON.stringify(clean) },
   });
   return { ok: true, senders: clean };
+}
+
+export type ConnectedAccount = { id: string; email: string; provider: string };
+
+// Whether the "+ Add email" (Google OAuth) flow is available in this deployment.
+export async function googleConnectAvailable(): Promise<boolean> {
+  await requireUser();
+  return googleOAuthConfigured();
+}
+
+// The org's Google-connected sending accounts (for the composer + settings).
+export async function getConnectedAccounts(): Promise<ConnectedAccount[]> {
+  const user = await requireUser();
+  const rows = await db.connectedEmailAccount.findMany({
+    where: { orgId: user.orgId },
+    select: { id: true, email: true, provider: true },
+    orderBy: { createdAt: "asc" },
+  });
+  return rows;
+}
+
+// Disconnect a connected account (org-scoped so one org can't remove another's).
+export async function removeConnectedAccount(id: string): Promise<{ ok: boolean }> {
+  const user = await requireUser();
+  await db.connectedEmailAccount.deleteMany({ where: { id, orgId: user.orgId } });
+  return { ok: true };
+}
+
+export type BoardFile = { columnId: string; columnName: string; name: string; type?: string; url: string };
+
+// Files stored in the item's File-type columns, so the composer can attach them
+// directly without a download round-trip (Additional Request #1). Org-scoped.
+export async function getItemFiles(itemId: string): Promise<BoardFile[]> {
+  const user = await requireUser();
+  const cells = await db.cell.findMany({
+    where: {
+      itemId,
+      value: { not: null },
+      column: { type: "file" },
+      item: { board: { environment: { orgId: user.orgId } } },
+    },
+    select: { value: true, column: { select: { id: true, name: true } } },
+  });
+  const out: BoardFile[] = [];
+  for (const c of cells) {
+    let arr: unknown;
+    try {
+      arr = JSON.parse(c.value ?? "[]");
+    } catch {
+      continue; // legacy single-link value — nothing attachable
+    }
+    if (!Array.isArray(arr)) continue;
+    for (const f of arr) {
+      if (f && typeof f.url === "string" && f.url.startsWith("data:")) {
+        out.push({
+          columnId: c.column.id,
+          columnName: c.column.name,
+          name: String(f.name ?? "file"),
+          type: typeof f.type === "string" ? f.type : undefined,
+          url: f.url,
+        });
+      }
+    }
+  }
+  return out;
 }
 
 function mapRow(r: {
@@ -190,24 +264,67 @@ export type SendEmailInput = {
 
 const MAX_ATTACH_TOTAL = 8 * 1024 * 1024; // 8 MB total across attachments
 
+// If `from` is a Google-connected account for this org, return OAuth2 creds so
+// the email is delivered *as* that account (true send-as). Refreshes and
+// persists the access token when it's expired. Returns null for plain SMTP.
+async function oauthForSender(orgId: string, from: string | undefined): Promise<MailOAuth | null> {
+  if (!from || !googleOAuthConfigured()) return null;
+  const acct = await db.connectedEmailAccount.findUnique({
+    where: { orgId_email: { orgId, email: from.toLowerCase() } },
+  });
+  if (!acct || acct.provider !== "google" || !acct.refreshToken) return null;
+
+  let accessToken = acct.accessToken || undefined;
+  let expires = acct.expiresAt ? acct.expiresAt.getTime() : undefined;
+  // Refresh when missing or within 60s of expiry.
+  if (!accessToken || !expires || expires < Date.now() + 60_000) {
+    try {
+      const refreshed = await refreshAccessToken(acct.refreshToken);
+      accessToken = refreshed.accessToken;
+      expires = refreshed.expiresAt ? refreshed.expiresAt.getTime() : undefined;
+      await db.connectedEmailAccount.update({
+        where: { id: acct.id },
+        data: { accessToken, expiresAt: refreshed.expiresAt },
+      });
+    } catch (e) {
+      // Fall through with the refresh token; nodemailer can still mint a token.
+      console.error("[email:token-refresh]", e);
+    }
+  }
+  return {
+    user: acct.email,
+    clientId: process.env.GOOGLE_CLIENT_ID ?? "",
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+    refreshToken: acct.refreshToken,
+    accessToken,
+    expires,
+  };
+}
+
 export async function sendItemEmail(
   boardId: string,
   itemId: string,
   input: SendEmailInput
 ): Promise<SendEmailResult> {
   const user = await requireEditor();
-  const configured = mailerConfigured();
+  const smtpConfigured = mailerConfigured();
   const recipient = input.to.trim();
   const cc = (input.cc ?? "").trim();
   const bcc = (input.bcc ?? "").trim();
   if (!recipient && !cc && !bcc)
-    return { ok: false, delivered: false, configured, error: "Enter at least one recipient (To, CC, or BCC)." };
+    return { ok: false, delivered: false, configured: smtpConfigured, error: "Enter at least one recipient (To, CC, or BCC)." };
   if (!input.subject.trim() && !input.body.trim())
-    return { ok: false, delivered: false, configured, error: "Enter a subject or message." };
+    return { ok: false, delivered: false, configured: smtpConfigured, error: "Enter a subject or message." };
 
   // Only allow an authorized From address; otherwise fall back to the default.
   const allowed = await getEmailSenders();
   const from = input.from && allowed.includes(input.from) ? input.from : allowed[0];
+
+  // Deliver as a user-connected Google account when the From matches one.
+  const oauth = await oauthForSender(user.orgId, from);
+  // Email is "configured" if either shared SMTP is set OR we can send as the
+  // chosen connected account.
+  const configured = smtpConfigured || !!oauth;
 
   const attachments = input.attachments ?? [];
   const totalBytes = attachments.reduce((s, a) => s + Math.ceil((a.dataUrl.length * 3) / 4), 0);
@@ -228,6 +345,7 @@ export async function sendItemEmail(
       contentBase64: a.dataUrl.includes(",") ? a.dataUrl.split(",")[1] : a.dataUrl,
       contentType: a.type,
     })),
+    oauth: oauth ?? undefined,
   });
 
   const delivered = res.ok === true;

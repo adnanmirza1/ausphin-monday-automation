@@ -10,6 +10,17 @@ export function mailerConfigured(): boolean {
 }
 
 export type MailAttachment = { filename: string; contentBase64: string; contentType?: string };
+// OAuth2 credentials for sending as a user-connected account (Requirement #1).
+// When present, delivery goes through that account (true "send-as") instead of
+// the shared SMTP account. nodemailer refreshes the access token as needed.
+export type MailOAuth = {
+  user: string; // the connected email address
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  accessToken?: string;
+  expires?: number; // ms epoch of access-token expiry, if known
+};
 export type Mail = {
   to: string;
   subject: string;
@@ -19,23 +30,38 @@ export type Mail = {
   cc?: string;
   bcc?: string;
   attachments?: MailAttachment[];
+  oauth?: MailOAuth; // send via this connected Google account instead of SMTP
 };
 export type MailResult = { ok: boolean; skipped?: boolean; error?: string };
 
 export async function sendMail(mail: Mail): Promise<MailResult> {
   if (!mail.to && !mail.cc && !mail.bcc) return { ok: false, error: "No recipient." };
-  if (!mailerConfigured()) {
+  // A connected OAuth account can deliver even when shared SMTP is unset.
+  if (!mail.oauth && !mailerConfigured()) {
     console.log(`[mailer:skipped] → ${mail.to} · ${mail.subject}`);
     return { ok: false, skipped: true };
   }
   try {
     const nodemailer = await import("nodemailer");
-    const transport = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT ?? 587),
-      secure: Number(process.env.SMTP_PORT ?? 587) === 465,
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    });
+    const transport = mail.oauth
+      ? nodemailer.createTransport({
+          service: "gmail",
+          auth: {
+            type: "OAuth2",
+            user: mail.oauth.user,
+            clientId: mail.oauth.clientId,
+            clientSecret: mail.oauth.clientSecret,
+            refreshToken: mail.oauth.refreshToken,
+            accessToken: mail.oauth.accessToken,
+            expires: mail.oauth.expires,
+          },
+        })
+      : nodemailer.createTransport({
+          host: process.env.SMTP_HOST,
+          port: Number(process.env.SMTP_PORT ?? 587),
+          secure: Number(process.env.SMTP_PORT ?? 587) === 465,
+          auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+        });
     await transport.sendMail({
       // Gmail/Workspace may rewrite From to the authenticated account unless the
       // address is a verified "send-as" alias — so keep the account as fallback.

@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { getOrgSenders, setOrgSenders } from "@/app/actions/email";
+import {
+  getOrgSenders,
+  setOrgSenders,
+  getConnectedAccounts,
+  removeConnectedAccount,
+  googleConnectAvailable,
+  type ConnectedAccount,
+} from "@/app/actions/email";
 
 // Requirement #1 — manage the org's approved "From" addresses once. These feed
 // the email composer's From dropdown for everyone in the org.
@@ -55,6 +62,8 @@ export function SenderSettings({ smtpFrom }: { smtpFrom: string | null }) {
   }
 
   return (
+    <>
+    <ConnectedAccounts />
     <div className="mt-4 rounded-xl border border-hair bg-white p-4 shadow-soft">
       <div className="flex items-start justify-between gap-2">
         <div>
@@ -132,6 +141,124 @@ export function SenderSettings({ smtpFrom }: { smtpFrom: string | null }) {
         domain send as-is; an address on a different domain may be rewritten by the
         provider unless it&rsquo;s a verified send-as alias.
       </p>
+    </div>
+    </>
+  );
+}
+
+// Google-connected accounts (Requirement #1 "+ Add Email"). Each authorized
+// account can be a true send-as From address in the email composer.
+function ConnectedAccounts() {
+  const [available, setAvailable] = useState(false);
+  const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [pending, start] = useTransition();
+
+  function refresh() {
+    return getConnectedAccounts()
+      .then(setAccounts)
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }
+
+  useEffect(() => {
+    googleConnectAvailable().then(setAvailable).catch(() => setAvailable(false));
+    refresh();
+  }, []);
+
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      if (e.origin !== window.location.origin) return;
+      const d = e.data as { source?: string; ok?: boolean };
+      if (d?.source === "google-email-connect") {
+        setBusy(false);
+        if (d.ok) refresh();
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  function connect() {
+    const w = 520;
+    const h = 640;
+    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
+    const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
+    const popup = window.open(
+      "/api/oauth/google/start",
+      "connect-email",
+      `width=${w},height=${h},left=${left},top=${top}`
+    );
+    if (popup) setBusy(true);
+  }
+
+  function disconnect(id: string) {
+    start(async () => {
+      await removeConnectedAccount(id);
+      await refresh();
+    });
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-hair bg-white p-4 shadow-soft">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-bold text-ink">Connected email accounts (Google)</h3>
+          <p className="text-xs text-muted">
+            Sign in with Google to send email as another business account — no extra
+            platform account needed. Connected accounts appear in the composer&rsquo;s
+            From dropdown for your team.
+          </p>
+        </div>
+        {available && (
+          <button
+            onClick={connect}
+            disabled={busy}
+            className="flex-none rounded-lg bg-teal px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-deep disabled:opacity-60"
+          >
+            {busy ? "Connecting…" : "+ Connect with Google"}
+          </button>
+        )}
+      </div>
+
+      {!available ? (
+        <p className="mt-3 rounded-lg bg-canvas px-3 py-2 text-xs text-muted">
+          Google sign-in isn&rsquo;t configured yet. Add{" "}
+          <code className="font-mono">GOOGLE_CLIENT_ID</code> and{" "}
+          <code className="font-mono">GOOGLE_CLIENT_SECRET</code> (with the callback
+          <code className="font-mono"> /api/oauth/google/callback</code>) to enable
+          &ldquo;+ Add Email&rdquo;.
+        </p>
+      ) : !loaded ? (
+        <p className="mt-3 text-xs text-muted">Loading…</p>
+      ) : accounts.length === 0 ? (
+        <p className="mt-3 text-xs text-muted">No accounts connected yet.</p>
+      ) : (
+        <div className="mt-3 flex flex-col gap-1.5">
+          {accounts.map((a) => (
+            <div
+              key={a.id}
+              className="flex items-center gap-2 rounded-lg border border-hair px-2.5 py-1.5 text-sm"
+            >
+              <span className="flex-1 truncate text-ink" title={a.email}>
+                🟢 {a.email}
+              </span>
+              <span className="flex-none rounded-full bg-canvas px-2 py-0.5 text-[10px] font-semibold text-muted">
+                {a.provider}
+              </span>
+              <button
+                onClick={() => disconnect(a.id)}
+                disabled={pending}
+                className="flex-none text-muted hover:text-danger disabled:opacity-50"
+                title="Disconnect"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

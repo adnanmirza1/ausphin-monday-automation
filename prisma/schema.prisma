@@ -30,6 +30,7 @@ model Organization {
   invoices     Invoice[]
   employers    Employer[]
   emails       EmailMessage[]
+  connectedEmails ConnectedEmailAccount[]
 }
 
 // Roles hold a JSON permission set. isSystem roles (Admin/Member/Viewer/Developer)
@@ -86,6 +87,30 @@ model User {
   updates        Update[]
   invitesCreated Invitation[]
   emailsSent     EmailMessage[]
+  connectedEmails ConnectedEmailAccount[]
+}
+
+// A user-authorized external email account (Requirement #1 — "+ Add Email").
+// Connected via Google OAuth so the platform can send true "as" emails without
+// the user creating a separate platform account. Tokens let us send via SMTP
+// XOAUTH2 / the Gmail API on their behalf; refreshToken renews the access token.
+// provider: google (extensible to microsoft later).
+model ConnectedEmailAccount {
+  id           String    @id @default(cuid())
+  orgId        String
+  userId       String
+  email        String
+  provider     String    @default("google")
+  accessToken  String    @default("")
+  refreshToken String    @default("")
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, email])
+  @@index([userId])
 }
 
 model Session {

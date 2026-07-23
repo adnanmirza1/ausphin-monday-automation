@@ -2,7 +2,14 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
-import { sendItemEmail, getEmailSenders, type EmailAttachment } from "@/app/actions/email";
+import {
+  sendItemEmail,
+  getEmailSenders,
+  getItemFiles,
+  googleConnectAvailable,
+  type EmailAttachment,
+  type BoardFile,
+} from "@/app/actions/email";
 
 // In-platform email composer. Opens inside the app (monday-style) instead of an
 // external mail client. Supports From (authorized senders) / To / CC / BCC /
@@ -41,13 +48,69 @@ export function EmailComposer({
   const [err, setErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [pending, start] = useTransition();
+  // "Attach from board" — files stored in the item's File columns.
+  const [boardFiles, setBoardFiles] = useState<BoardFile[] | null>(null);
+  const [showBoardFiles, setShowBoardFiles] = useState(false);
+  const [loadingFiles, setLoadingFiles] = useState(false);
+
+  const [canAddEmail, setCanAddEmail] = useState(false);
+  const [connecting, setConnecting] = useState(false);
 
   // Load the logged-in user's authorized sender addresses; default to the first.
-  useEffect(() => {
+  const refreshSenders = (select?: string) =>
     getEmailSenders().then((list) => {
       setSenders(list);
-      setFrom((f) => f || list[0] || "");
+      setFrom((f) => select || f || list[0] || "");
+      return list;
     });
+
+  useEffect(() => {
+    refreshSenders();
+    googleConnectAvailable().then(setCanAddEmail).catch(() => setCanAddEmail(false));
+     
+  }, []);
+
+  // "+ Add email" — open Google OAuth in a popup and pick up the connected
+  // address when the callback posts back (Requirement #1).
+  function openAddEmail() {
+    setErr(null);
+    const w = 520;
+    const h = 640;
+    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
+    const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
+    const popup = window.open(
+      "/api/oauth/google/start",
+      "connect-email",
+      `width=${w},height=${h},left=${left},top=${top}`
+    );
+    if (!popup) {
+      setErr("Please allow pop-ups to connect an email account.");
+      return;
+    }
+    setConnecting(true);
+  }
+
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      if (e.origin !== window.location.origin) return;
+      const d = e.data as { source?: string; ok?: boolean; detail?: string };
+      if (!d || d.source !== "google-email-connect") return;
+      setConnecting(false);
+      if (d.ok && d.detail) {
+        refreshSenders(d.detail);
+        setMsg(`✓ Connected ${d.detail}.`);
+        setTimeout(() => setMsg(null), 2500);
+      } else {
+        setErr(
+          d.detail === "google_not_configured"
+            ? "Google sign-in isn't set up yet — ask an admin to configure it."
+            : "Could not connect that email account. Please try again."
+        );
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+     
   }, []);
 
   function onFiles(e: React.ChangeEvent<HTMLInputElement>) {
@@ -67,13 +130,50 @@ export function EmailComposer({
       )
     ).then((added) => {
       const next = [...attachments, ...added];
-      const total = next.reduce((s, a) => s + Math.ceil((a.dataUrl.length * 3) / 4), 0);
+      const total = next.reduce((s, a) => s + bytesOf(a.dataUrl), 0);
       if (total > MAX_ATTACH_TOTAL) {
         setErr("Attachments exceed 8 MB total.");
         return;
       }
       setAttachments(next);
     });
+  }
+
+  function toggleBoardFiles() {
+    setErr(null);
+    if (showBoardFiles) {
+      setShowBoardFiles(false);
+      return;
+    }
+    setShowBoardFiles(true);
+    if (boardFiles === null) {
+      setLoadingFiles(true);
+      getItemFiles(itemId)
+        .then((list) => setBoardFiles(list))
+        .catch(() => setBoardFiles([]))
+        .finally(() => setLoadingFiles(false));
+    }
+  }
+
+  // A board file is "attached" when an attachment with the same name + data
+  // already exists (data URLs are identical for the same stored file).
+  function isBoardFileAttached(f: BoardFile) {
+    return attachments.some((a) => a.name === f.name && a.dataUrl === f.url);
+  }
+
+  function toggleBoardFile(f: BoardFile) {
+    setErr(null);
+    if (isBoardFileAttached(f)) {
+      setAttachments((list) => list.filter((a) => !(a.name === f.name && a.dataUrl === f.url)));
+      return;
+    }
+    const next = [...attachments, { name: f.name, type: f.type, dataUrl: f.url }];
+    const total = next.reduce((s, a) => s + bytesOf(a.dataUrl), 0);
+    if (total > MAX_ATTACH_TOTAL) {
+      setErr("Attachments exceed 8 MB total.");
+      return;
+    }
+    setAttachments(next);
   }
 
   function send() {
@@ -112,7 +212,7 @@ export function EmailComposer({
     });
   }
 
-  const attachTotal = attachments.reduce((s, a) => s + Math.ceil((a.dataUrl.length * 3) / 4), 0);
+  const attachTotal = attachments.reduce((s, a) => s + bytesOf(a.dataUrl), 0);
 
   return createPortal(
     <div className="fixed inset-0 z-[70] grid place-items-center p-4">
@@ -126,18 +226,38 @@ export function EmailComposer({
         </div>
 
         <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto scroll-thin pr-0.5">
-          {/* From — authorized senders */}
+          {/* From — authorized senders + connect another account */}
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-semibold text-body">From</span>
-            {senders.length > 1 ? (
-              <select value={from} onChange={(e) => setFrom(e.target.value)} className={inp}>
+            <div className="flex items-center gap-1.5">
+              <select
+                value={from}
+                onChange={(e) => {
+                  if (e.target.value === "__add__") {
+                    openAddEmail();
+                    return; // keep current selection
+                  }
+                  setFrom(e.target.value);
+                }}
+                className={`${inp} flex-1`}
+              >
                 {senders.map((s) => (
                   <option key={s} value={s}>{s}</option>
                 ))}
+                {canAddEmail && <option value="__add__">➕ Add email account…</option>}
               </select>
-            ) : (
-              <input value={from} readOnly className={`${inp} text-muted`} />
-            )}
+              {canAddEmail && (
+                <button
+                  type="button"
+                  onClick={openAddEmail}
+                  disabled={connecting}
+                  className="flex-none rounded-lg border border-hair px-2.5 py-2 text-xs font-medium text-body hover:bg-canvas disabled:opacity-60"
+                  title="Connect another email account with Google"
+                >
+                  {connecting ? "Connecting…" : "+ Add"}
+                </button>
+              )}
+            </div>
           </label>
 
           {/* To + CC/BCC toggles */}
@@ -184,15 +304,63 @@ export function EmailComposer({
               <span className="text-[11px] font-semibold text-body">
                 Attachments {attachments.length > 0 && <span className="text-muted">· {(attachTotal / 1024 / 1024).toFixed(1)} MB</span>}
               </span>
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                className="rounded-lg border border-hair px-2.5 py-1 text-xs font-medium text-body hover:bg-canvas"
-              >
-                📎 Attach files
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  className="rounded-lg border border-hair px-2.5 py-1 text-xs font-medium text-body hover:bg-canvas"
+                >
+                  📎 Attach files
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleBoardFiles}
+                  className={`rounded-lg border px-2.5 py-1 text-xs font-medium ${
+                    showBoardFiles ? "border-teal bg-teal/10 text-teal" : "border-hair text-body hover:bg-canvas"
+                  }`}
+                >
+                  🗂 Attach from board
+                </button>
+              </div>
               <input ref={fileRef} type="file" multiple onChange={onFiles} className="hidden" />
             </div>
+
+            {/* Board files picker — files stored on the item's File columns */}
+            {showBoardFiles && (
+              <div className="rounded-lg border border-hair bg-canvas/60 p-2">
+                {loadingFiles ? (
+                  <p className="px-1 py-1 text-xs text-muted">Loading files…</p>
+                ) : !boardFiles || boardFiles.length === 0 ? (
+                  <p className="px-1 py-1 text-xs text-muted">
+                    No files on this item&rsquo;s File columns yet.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {boardFiles.map((f, i) => {
+                      const on = isBoardFileAttached(f);
+                      return (
+                        <button
+                          key={`${f.columnId}-${f.name}-${i}`}
+                          type="button"
+                          onClick={() => toggleBoardFile(f)}
+                          className={`flex items-center gap-2 rounded-md border px-2 py-1 text-left text-xs ${
+                            on ? "border-teal bg-teal/10" : "border-hair bg-white hover:bg-canvas"
+                          }`}
+                        >
+                          <span className={`flex-none ${on ? "text-teal" : "text-muted"}`}>{on ? "☑" : "☐"}</span>
+                          <span className="flex-1 truncate text-body" title={f.name}>
+                            📄 {f.name}
+                          </span>
+                          <span className="flex-none rounded bg-canvas px-1.5 py-0.5 text-[10px] text-muted" title={f.columnName}>
+                            {f.columnName}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
             {attachments.length > 0 && (
               <div className="flex flex-col gap-1">
                 {attachments.map((a, i) => (
@@ -231,6 +399,13 @@ export function EmailComposer({
     </div>,
     document.body
   );
+}
+
+// Approximate decoded byte size of a data URL (base64 payload after the comma).
+function bytesOf(dataUrl: string): number {
+  const i = dataUrl.indexOf(",");
+  const b64 = i >= 0 ? dataUrl.slice(i + 1) : dataUrl;
+  return Math.ceil((b64.length * 3) / 4);
 }
 
 const inp =
