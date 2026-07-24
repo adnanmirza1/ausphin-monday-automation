@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireAdmin, requireEditor, requireUser } from "@/lib/guard";
+import { permsOf, requireAdmin, requireEditor, requireUser } from "@/lib/guard";
 import { sendMail, mailerConfigured, type MailOAuth } from "@/lib/mailer";
 import { googleOAuthConfigured, refreshAccessToken } from "@/lib/google-oauth";
 
@@ -131,10 +131,20 @@ export async function getConnectedAccounts(): Promise<ConnectedAccount[]> {
   return rows;
 }
 
-// Disconnect a connected account (org-scoped so one org can't remove another's).
-export async function removeConnectedAccount(id: string): Promise<{ ok: boolean }> {
+// Disconnect a connected account. Org-scoped, and only an admin or the person
+// who connected it may remove it (it's a shared, org-wide sending identity).
+export async function removeConnectedAccount(id: string): Promise<{ ok: boolean; error?: string }> {
   const user = await requireUser();
-  await db.connectedEmailAccount.deleteMany({ where: { id, orgId: user.orgId } });
+  const p = permsOf(user);
+  const isAdmin = !!(p.canManageUsers || p.canManageEnvironments);
+  const acct = await db.connectedEmailAccount.findFirst({
+    where: { id, orgId: user.orgId },
+    select: { userId: true },
+  });
+  if (!acct) return { ok: false, error: "Account not found." };
+  if (!isAdmin && acct.userId !== user.id)
+    return { ok: false, error: "Only an admin or the person who connected it can remove this account." };
+  await db.connectedEmailAccount.delete({ where: { id } });
   return { ok: true };
 }
 
