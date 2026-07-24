@@ -74,6 +74,14 @@ export function EmailComposer({
   // address when the callback posts back (Requirement #1).
   function openAddEmail() {
     setErr(null);
+    // Always visible (like monday.com); if Google isn't configured yet, explain
+    // what's needed instead of silently doing nothing.
+    if (!canAddEmail) {
+      setErr(
+        "Adding another sender needs Google sign-in, which isn't set up yet. An admin can enable it in Settings → Connected email accounts (add Google OAuth credentials)."
+      );
+      return;
+    }
     const w = 520;
     const h = 640;
     const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
@@ -244,19 +252,17 @@ export function EmailComposer({
                 {senders.map((s) => (
                   <option key={s} value={s}>{s}</option>
                 ))}
-                {canAddEmail && <option value="__add__">➕ Add email account…</option>}
+                <option value="__add__">➕ Add email account…</option>
               </select>
-              {canAddEmail && (
-                <button
-                  type="button"
-                  onClick={openAddEmail}
-                  disabled={connecting}
-                  className="flex-none rounded-lg border border-hair px-2.5 py-2 text-xs font-medium text-body hover:bg-canvas disabled:opacity-60"
-                  title="Connect another email account with Google"
-                >
-                  {connecting ? "Connecting…" : "+ Add"}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={openAddEmail}
+                disabled={connecting}
+                className="flex-none rounded-lg border border-hair px-2.5 py-2 text-xs font-medium text-body hover:bg-canvas disabled:opacity-60"
+                title="Connect another email account with Google"
+              >
+                {connecting ? "Connecting…" : "+ Add"}
+              </button>
             </div>
           </label>
 
