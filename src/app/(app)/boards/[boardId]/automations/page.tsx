@@ -19,7 +19,7 @@ export default async function AutomationsPage({
       environment: true,
       columns: { orderBy: { position: "asc" } },
       groups: { orderBy: { position: "asc" } },
-      automations: { orderBy: { createdAt: "asc" } },
+      automations: { orderBy: [{ folder: "asc" }, { position: "asc" }, { createdAt: "asc" }] },
     },
   });
   if (!board || board.environment.orgId !== user.orgId) notFound();
@@ -64,6 +64,7 @@ export default async function AutomationsPage({
         id: a.id,
         name: a.name,
         folder: a.folder,
+        position: a.position,
         enabled: a.enabled,
         trigger: a.trigger,
         action: a.action,

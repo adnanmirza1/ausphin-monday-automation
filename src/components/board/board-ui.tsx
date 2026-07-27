@@ -26,6 +26,7 @@ import {
   type ItemTag,
 } from "@/app/actions/employers";
 import { getItemInbox, logItemEmail, type EmailRow } from "@/app/actions/email";
+import { renameItem } from "@/app/actions/board";
 import { EmailComposer } from "@/components/board/email-composer";
 import { TAG_STAGES, TAG_STAGE_META, type TagStage } from "@/lib/constants";
 import type { TemplateLite } from "./docs-button";
@@ -115,6 +116,8 @@ function ItemPanel({
   const [signMsg, setSignMsg] = useState<string | null>(null);
   const [emails, setEmails] = useState<EmailRow[] | null>(null);
   const [emailTo, setEmailTo] = useState("");
+  // Editable item name in the drawer (Improvement A2).
+  const [itemName, setItemName] = useState(item.name);
   const [composing, setComposing] = useState(false);
   const [logging, setLogging] = useState(false);
   const [, start] = useTransition();
@@ -194,9 +197,21 @@ function ItemPanel({
       <div className="relative z-10 flex h-full w-full max-w-md flex-col bg-white shadow-pop animate-rise">
         {/* header */}
         <div className="flex items-center justify-between border-b border-hair px-5 py-4">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Item</p>
-            <h2 className="truncate text-lg font-bold text-ink">{item.name}</h2>
+            <input
+              value={itemName}
+              onChange={(e) => setItemName(e.target.value)}
+              onBlur={() => {
+                const next = itemName.trim();
+                if (next && next !== item.name) start(() => void renameItem(boardId, item.id, next));
+                else if (!next) setItemName(item.name);
+              }}
+              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              placeholder="Item name"
+              title="Click to rename this item"
+              className="w-full truncate rounded-md bg-transparent text-lg font-bold text-ink outline-none hover:bg-canvas focus:bg-teal/5 focus:px-1"
+            />
           </div>
           <button
             onClick={onClose}

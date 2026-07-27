@@ -18,11 +18,14 @@ export type AutomationInput = {
 
 export async function createAutomation(boardId: string, input: AutomationInput) {
   await requireEditor();
+  const folder = input.folder.trim();
+  const count = await db.automation.count({ where: { boardId, folder } });
   await db.automation.create({
     data: {
       boardId,
       name: input.name.trim() || "Untitled automation",
-      folder: input.folder.trim(),
+      folder,
+      position: count,
       trigger: JSON.stringify(input.trigger),
       action: JSON.stringify(input.action),
     },
@@ -73,5 +76,35 @@ export async function renameFolder(boardId: string, from: string, to: string) {
 export async function deleteAutomation(boardId: string, id: string) {
   await requireEditor();
   await db.automation.delete({ where: { id } });
+  touch(boardId);
+}
+
+// Drag-and-drop: move an automation into `targetFolder` and place it before
+// `beforeId` (or at the end when null), reindexing that folder's positions.
+// "General" is the display name for the empty-folder bucket.
+export async function moveAutomation(
+  boardId: string,
+  id: string,
+  targetFolder: string,
+  beforeId: string | null
+) {
+  await requireEditor();
+  const folder = targetFolder === "General" ? "" : targetFolder.trim();
+
+  // Put the dragged automation into the target folder first.
+  await db.automation.update({ where: { id }, data: { folder } });
+
+  const existing = await db.automation.findMany({
+    where: { boardId, folder },
+    orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+    select: { id: true },
+  });
+  const ids = existing.map((a) => a.id).filter((x) => x !== id);
+  const at = beforeId ? ids.indexOf(beforeId) : ids.length;
+  ids.splice(at === -1 ? ids.length : at, 0, id);
+
+  for (let i = 0; i < ids.length; i++) {
+    await db.automation.update({ where: { id: ids[i] }, data: { position: i } });
+  }
   touch(boardId);
 }

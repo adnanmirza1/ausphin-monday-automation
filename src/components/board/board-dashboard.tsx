@@ -72,6 +72,9 @@ export type WidgetConfig = {
   yColumn?: string; // number column NAME for sum/average
   filters?: ChartFilter[]; // applied to all rows (global)
   boardFilters?: Record<string, ChartFilter[]>; // per-connected-board filters (§5F)
+  // progress-only (A7 — customizable like charts)
+  statusColumn?: string; // status column NAME to measure completion on
+  doneLabels?: string[]; // label texts that count as "complete"
 };
 
 const WIDGET_CATALOG: { type: WidgetConfig["type"]; name: string; desc: string; icon: string; preset?: Partial<WidgetConfig> }[] = [
@@ -305,7 +308,11 @@ export function BoardDashboard({
               onLeft={i > 0 ? () => move(w.id, -1) : undefined}
               onRight={i < widgets.length - 1 ? () => move(w.id, 1) : undefined}
               onFullscreen={() => setFullscreenId(w.id)}
-              onSettings={w.type === "chart" && !readOnly ? () => setSettingsId((s) => (s === w.id ? null : w.id)) : undefined}
+              onSettings={
+                (w.type === "chart" || w.type === "progress") && !readOnly
+                  ? () => setSettingsId((s) => (s === w.id ? null : w.id))
+                  : undefined
+              }
               onExport={w.type === "chart" ? () => setExportTick((t) => ({ id: w.id, n: t.n + 1 })) : undefined}
             >
               {w.type === "chart" ? (
@@ -319,6 +326,15 @@ export function BoardDashboard({
                   settingsOpen={settingsId === w.id}
                   onCloseSettings={() => setSettingsId(null)}
                   exportSignal={exportTick.id === w.id ? exportTick.n : 0}
+                  onChange={(patch) => updateWidget(w.id, patch)}
+                />
+              ) : w.type === "progress" ? (
+                <ProgressWidget
+                  config={w}
+                  board={board}
+                  readOnly={readOnly}
+                  settingsOpen={settingsId === w.id}
+                  onCloseSettings={() => setSettingsId(null)}
                   onChange={(patch) => updateWidget(w.id, patch)}
                 />
               ) : (
@@ -356,6 +372,8 @@ export function BoardDashboard({
                     onChange={() => {}}
                     large
                   />
+                ) : w.type === "progress" ? (
+                  <ProgressWidget config={w} board={board} readOnly settingsOpen={false} onCloseSettings={() => {}} onChange={() => {}} large />
                 ) : (
                   <PresetWidget type={w.type} summary={summary} />
                 )}
@@ -1396,6 +1414,124 @@ function buildSummary(board: BoardData): Summary {
     status,
     doneRate: items.length ? Math.min(100, Math.round((done / items.length) * 100)) : 0,
   };
+}
+
+/* ── Progress widget (customizable, A7) ─────────────────────────────────────── */
+function ProgressWidget({
+  config,
+  board,
+  readOnly,
+  settingsOpen,
+  onCloseSettings,
+  onChange,
+  large,
+}: {
+  config: WidgetConfig;
+  board: BoardData;
+  readOnly: boolean;
+  settingsOpen: boolean;
+  onCloseSettings: () => void;
+  onChange: (patch: Partial<WidgetConfig>) => void;
+  large?: boolean;
+}) {
+  const statusCols = board.columns.filter((c) => c.type === "status");
+  // Selected status column by NAME (fall back to the first status column).
+  const col =
+    statusCols.find((c) => c.name === config.statusColumn) ?? statusCols[0] ?? null;
+  // Labels counted as "complete" — default to a label literally named "done".
+  const doneLabels =
+    config.doneLabels && config.doneLabels.length
+      ? config.doneLabels
+      : col?.labels.filter((l) => l.label.toLowerCase() === "done").map((l) => l.id) ??
+        [];
+
+  const items = board.groups.flatMap((g) => g.items);
+  let done = 0;
+  if (col) {
+    for (const it of items) {
+      const v = it.cells[col.id]?.value;
+      if (v && doneLabels.includes(v)) done += 1;
+    }
+  }
+  const denom = items.length; // % of ALL items that are complete (monday-style)
+  const pct = denom ? Math.min(100, Math.round((done / denom) * 100)) : 0;
+  const doneNames = col
+    ? col.labels.filter((l) => doneLabels.includes(l.id)).map((l) => l.label).join(", ")
+    : "";
+
+  if (settingsOpen && !readOnly) {
+    return (
+      <div className="grid gap-3">
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-body">Status column</label>
+          <select
+            value={col?.name ?? ""}
+            onChange={(e) => onChange({ statusColumn: e.target.value, doneLabels: [] })}
+            className={selCls}
+          >
+            {statusCols.length === 0 && <option value="">No status column</option>}
+            {statusCols.map((c) => (
+              <option key={c.id} value={c.name}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-body">
+            Count these as complete
+          </label>
+          <div className="flex flex-wrap gap-1.5">
+            {col?.labels.map((l) => {
+              const on = doneLabels.includes(l.id);
+              return (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() =>
+                    onChange({
+                      doneLabels: on ? doneLabels.filter((x) => x !== l.id) : [...doneLabels, l.id],
+                    })
+                  }
+                  className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${on ? "border-transparent text-white" : "border-hair text-body"}`}
+                  style={on ? { background: l.color } : undefined}
+                >
+                  <span className={on ? "" : "opacity-50"}>{on ? "✓" : "○"}</span> {l.label}
+                </button>
+              );
+            })}
+            {col && col.labels.length === 0 && (
+              <span className="text-xs text-muted">This column has no labels.</span>
+            )}
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <button
+            onClick={onCloseSettings}
+            className="rounded-lg bg-teal px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-deep"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!col) return <Empty />;
+  return (
+    <div className={`flex items-center gap-4 ${large ? "scale-125 py-6" : ""}`}>
+      <Ring pct={pct} />
+      <div>
+        <p className="text-2xl font-extrabold text-ink tabular-nums">{pct}%</p>
+        <p className="text-xs text-muted">
+          {done} of {denom} {denom === 1 ? "item" : "items"} complete
+        </p>
+        {doneNames && (
+          <p className="mt-0.5 text-[11px] text-muted">
+            {col.name}: {doneNames}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function PresetWidget({ type, summary }: { type: WidgetConfig["type"]; summary: Summary }) {

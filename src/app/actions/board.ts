@@ -147,9 +147,19 @@ export async function bulkMoveItems(
 ) {
   await requireEditor();
   if (itemIds.length === 0) return;
+  // Only fire the "item moved to group" trigger for items whose group actually
+  // changes — matches the single-item move path so bulk moves run automations.
+  const before = await db.item.findMany({
+    where: { id: { in: itemIds }, boardId },
+    select: { id: true, groupId: true },
+  });
+  const changed = new Set(before.filter((i) => i.groupId !== groupId).map((i) => i.id));
   let count = await db.item.count({ where: { groupId } });
   for (const id of itemIds) {
     await db.item.update({ where: { id }, data: { groupId, position: count++ } });
+  }
+  for (const id of changed) {
+    await runAutomations({ type: "item_moved", boardId, itemId: id, groupId });
   }
   touch(boardId);
 }

@@ -1,10 +1,21 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { db } from "@/lib/db";
 import { requireAdmin } from "@/lib/guard";
 import { hashPassword } from "@/lib/auth";
+import { sendMail } from "@/lib/mailer";
 import { PALETTE } from "@/lib/constants";
+
+// Best-effort absolute origin for building links in emails (works on Vercel).
+async function appOrigin(): Promise<string> {
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  const proto = h.get("x-forwarded-proto") ?? (process.env.NODE_ENV === "production" ? "https" : "http");
+  if (host) return `${proto}://${host}`;
+  return process.env.APP_URL ?? "";
+}
 
 function touch() {
   revalidatePath("/admin");
@@ -209,10 +220,35 @@ export async function createInvitation(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const roleId = String(formData.get("roleId") ?? "") || null;
   if (!email) return;
-  await db.invitation.create({
+  const invitation = await db.invitation.create({
     data: { orgId: admin.orgId, email, roleId, invitedBy: admin.id },
   });
+
+  // Send the invitation email with an accept link (Improvement A1). Delivery is
+  // best-effort — a mail failure must not block creating the invitation.
+  try {
+    const origin = await appOrigin();
+    const link = origin ? `${origin}/invite/${invitation.token}` : `/invite/${invitation.token}`;
+    const org = await db.organization.findUnique({ where: { id: admin.orgId }, select: { name: true } });
+    const orgName = org?.name || "Oswin Work OS";
+    await sendMail({
+      to: email,
+      subject: `You're invited to ${orgName}`,
+      html:
+        `<p>Hi,</p>` +
+        `<p><b>${escapeHtml(admin.name)}</b> has invited you to join <b>${escapeHtml(orgName)}</b> on Oswin Work OS.</p>` +
+        `<p><a href="${link}" style="display:inline-block;background:#0B7A6F;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Accept invitation</a></p>` +
+        `<p>Or paste this link into your browser:<br/><a href="${link}">${link}</a></p>`,
+      text: `${admin.name} invited you to join ${orgName} on Oswin Work OS.\n\nAccept: ${link}`,
+    });
+  } catch (e) {
+    console.error("[invite:email]", e);
+  }
   touch();
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 export async function revokeInvitation(id: string) {

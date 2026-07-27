@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { generateDocumentCore } from "@/lib/generate-doc";
-import { sendMail } from "@/lib/mailer";
+import { sendMail, mailerConfigured } from "@/lib/mailer";
 import { urlDisplay, parseFileValue } from "@/lib/cell-values";
 
 // Events emitted by board mutations.
@@ -28,7 +28,19 @@ type Action =
   | { type: "request_invoice"; account: string; amountColumnId?: string }
   | { type: "send_email"; toColumnId?: string; subject: string; body: string }
   | { type: "create_item_in_board"; boardId: string; connect?: boolean }
-  | { type: "set_date"; columnId: string; mode: "specific" | "today" | "offset"; date?: string; offsetDays?: number };
+  | { type: "set_date"; columnId: string; mode: "specific" | "today" | "offset"; date?: string; offsetDays?: number }
+  | { type: "change_column_value"; columnId: string; value: string };
+
+// A stored action is either a single action or a sequence (multiple THEN steps).
+// Kept backward-compatible: existing single-action rules parse straight to Action.
+type StoredAction = Action | { type: "multi"; actions: Action[] };
+
+// Normalize a parsed stored action into a flat list of actions to run in order.
+function actionList(a: StoredAction | null): Action[] {
+  if (!a) return [];
+  if (a.type === "multi") return Array.isArray(a.actions) ? a.actions : [];
+  return [a];
+}
 
 function parse<T>(raw: string): T | null {
   try {
@@ -87,10 +99,13 @@ export async function runAutomations(event: AutomationEvent) {
 
   for (const a of automations) {
     const trigger = parse<Trigger>(a.trigger);
-    const action = parse<Action>(a.action);
-    if (!trigger || !action) continue;
+    const stored = parse<StoredAction>(a.action);
+    if (!trigger || !stored) continue;
     if (!matches(trigger, event)) continue;
-    await execute(action, event);
+    // Run every THEN step in order (supports multiple actions per rule).
+    for (const action of actionList(stored)) {
+      await execute(action, event);
+    }
   }
 }
 
@@ -146,6 +161,31 @@ async function execute(action: Action, event: AutomationEvent) {
         where: { itemId_columnId: { itemId, columnId: action.columnId } },
         create: { itemId, columnId: action.columnId, value: dateStr },
         update: { value: dateStr },
+      });
+      break;
+    }
+
+    case "change_column_value": {
+      // Update any column to a specific value (Improvement A6). For person
+      // columns the value is treated as a userId so assignments stay valid.
+      const col = await db.column.findUnique({
+        where: { id: action.columnId },
+        select: { type: true },
+      });
+      if (!col) break;
+      const isPerson = col.type === "person";
+      await db.cell.upsert({
+        where: { itemId_columnId: { itemId, columnId: action.columnId } },
+        create: {
+          itemId,
+          columnId: action.columnId,
+          value: action.value || null,
+          ...(isPerson ? { personId: action.value || null } : {}),
+        },
+        update: {
+          value: action.value || null,
+          ...(isPerson ? { personId: action.value || null } : {}),
+        },
       });
       break;
     }
@@ -232,21 +272,33 @@ async function execute(action: Action, event: AutomationEvent) {
       const toCell = action.toColumnId
         ? it.cells.find((c) => c.columnId === action.toColumnId)
         : it.cells.find((c) => c.column.type === "email");
-      const to = toCell?.value ?? "";
+      const to = (toCell?.value ?? "").trim();
       const subject = await renderTemplate(itemId, action.subject || "");
       const body = await renderTemplate(itemId, action.body || "");
+      const from = process.env.SMTP_FROM || process.env.SMTP_USER || "";
+      const configured = mailerConfigured();
+      let delivered = false;
+      let sendError: string | undefined;
       if (to) {
-        await sendMail({
+        const res = await sendMail({
+          from,
           to,
           subject: subject || "(no subject)",
-          html: `<p>${body.replace(/\n/g, "<br/>")}</p>`,
+          html: `<p>${body.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br/>")}</p>`,
+          text: body,
         });
+        delivered = res.ok === true;
+        sendError = res.error;
       }
-      // Record what was sent on the item's timeline (so it's visible even in dev).
+      // Honest status so a silent non-delivery is visible in the history.
+      const status = !to ? "skipped" : delivered ? "sent" : configured ? "failed" : "logged";
+      // Record what happened on the item's timeline.
       await db.update.create({
         data: {
           itemId,
-          body: `✉ Automated email${to ? ` → ${to}` : " (no recipient)"}: ${subject}\n\n${body}`,
+          body:
+            `✉ Automated email${to ? ` → ${to}` : " (no recipient found)"} [${status}]` +
+            `${sendError ? ` — ${sendError}` : ""}: ${subject}\n\n${body}`,
           mentions: "[]",
         },
       });
@@ -257,8 +309,8 @@ async function execute(action: Action, event: AutomationEvent) {
             orgId: it.board.environment.orgId,
             itemId,
             direction: "outbound",
-            status: "sent",
-            fromEmail: process.env.SMTP_FROM || "",
+            status,
+            fromEmail: from,
             toEmail: to,
             subject,
             body,

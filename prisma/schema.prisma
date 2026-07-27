@@ -443,9 +443,10 @@ model Automation {
   boardId   String
   name      String
   folder    String   @default("") // client wants folders + search
+  position  Int      @default(0) // order within a folder (drag-and-drop)
   enabled   Boolean  @default(true)
   trigger   String   @default("{}") // JSON
-  action    String   @default("{}") // JSON
+  action    String   @default("{}") // JSON — single Action or { type:"multi", actions:[] }
   createdAt DateTime @default(now())
 
   board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)

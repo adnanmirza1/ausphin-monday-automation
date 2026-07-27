@@ -9,6 +9,7 @@ import {
   toggleAutomation,
   deleteAutomation,
   renameFolder,
+  moveAutomation,
 } from "@/app/actions/automation";
 
 type Col = { id: string; name: string; type: string; labels: StatusLabel[] };
@@ -19,6 +20,7 @@ type Auto = {
   id: string;
   name: string;
   folder: string;
+  position: number;
   enabled: boolean;
   trigger: string;
   action: string;
@@ -48,6 +50,7 @@ export function AutomationsPanel({
   const [q, setQ] = useState("");
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Auto | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
   const [, start] = useTransition();
   const statusCols = columns.filter((c) => c.type === "status");
   const personCols = columns.filter((c) => c.type === "person");
@@ -61,7 +64,7 @@ export function AutomationsPanel({
       a.folder.toLowerCase().includes(q.toLowerCase())
   );
 
-  // group by folder
+  // group by folder, preserving each folder's internal position order
   const byFolder = useMemo(() => {
     const map = new Map<string, Auto[]>();
     for (const a of filtered) {
@@ -69,8 +72,24 @@ export function AutomationsPanel({
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(a);
     }
+    for (const list of map.values()) list.sort((a, b) => a.position - b.position);
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [filtered]);
+
+  // All existing folder names (for the builder's folder picker). Always offer General.
+  const folderNames = useMemo(() => {
+    const set = new Set<string>(["General"]);
+    for (const a of automations) set.add(a.folder || "General");
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [automations]);
+
+  function drop(targetFolder: string, beforeId: string | null) {
+    if (!dragId) return;
+    const id = dragId;
+    setDragId(null);
+    if (id === beforeId) return;
+    start(() => void moveAutomation(boardId, id, targetFolder, beforeId));
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -112,9 +131,7 @@ export function AutomationsPanel({
       </header>
 
       <div className="flex-1 overflow-auto scroll-thin p-4 sm:p-6">
-        {automations.length === 0 && (
-          <EmptyState onCreate={() => setCreating(true)} />
-        )}
+        {automations.length === 0 && <EmptyState onCreate={() => setCreating(true)} />}
 
         {byFolder.map(([folder, list]) => (
           <div key={folder} className="mb-6">
@@ -135,7 +152,16 @@ export function AutomationsPanel({
                 rename
               </button>
             </div>
-            <div className="grid gap-2">
+            <div
+              className="grid gap-2"
+              onDragOver={(e) => {
+                if (dragId) e.preventDefault();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                drop(folder, null); // dropped in the folder's empty space → append
+              }}
+            >
               {list.map((a) => (
                 <AutomationCard
                   key={a.id}
@@ -146,8 +172,18 @@ export function AutomationsPanel({
                   departments={departments}
                   templates={templates}
                   onEdit={() => setEditing(a)}
+                  dragging={dragId === a.id}
+                  onDragStart={() => setDragId(a.id)}
+                  onDragEnd={() => setDragId(null)}
+                  onDropBefore={() => drop(folder, a.id)}
+                  dragActive={!!dragId}
                 />
               ))}
+              {list.length === 0 && (
+                <div className="rounded-lg border border-dashed border-hair px-3 py-4 text-center text-xs text-muted">
+                  Drop an automation here
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -166,6 +202,7 @@ export function AutomationsPanel({
           groups={groups}
           departments={departments}
           templates={templates}
+          folderNames={folderNames}
           existing={editing}
           onClose={() => {
             setCreating(false);
@@ -178,6 +215,54 @@ export function AutomationsPanel({
 }
 
 /* ── readable summary ─────────────────────────────── */
+function describeTrigger(t: SafeObj, columns: Col[], groups: Grp[]) {
+  const colName = (id: string) => columns.find((c) => c.id === id)?.name ?? "column";
+  const label = (colId: string, id: string) =>
+    columns.find((c) => c.id === colId)?.labels.find((l) => l.id === id)?.label ?? id;
+  const grp = (id: string) => groups.find((g) => g.id === id)?.name ?? "group";
+  if (t?.type === "item_created") return "When an item is created";
+  if (t?.type === "status_changes")
+    return `When ${colName(t.columnId)} changes to ${t.to === "any" ? "any status" : label(t.columnId, t.to)}`;
+  if (t?.type === "column_changes")
+    return `When ${colName(t.columnId)} ${t.when === "not_empty" ? "becomes non-empty" : "changes"}`;
+  if (t?.type === "person_assigned") return `When a person is assigned in ${colName(t.columnId)}`;
+  if (t?.type === "item_moved")
+    return `When an item moves to ${t.groupId === "any" ? "any group" : `“${grp(t.groupId)}”`}`;
+  return "When something happens";
+}
+
+function describeAction(a: SafeObj, columns: Col[], groups: Grp[], departments: Dep[], templates: Tpl[]) {
+  const colName = (id: string) => columns.find((c) => c.id === id)?.name ?? "column";
+  const label = (colId: string, id: string) =>
+    columns.find((c) => c.id === colId)?.labels.find((l) => l.id === id)?.label ?? id;
+  const grp = (id: string) => groups.find((g) => g.id === id)?.name ?? "group";
+  const dep = (id: string) => departments.find((d) => d.id === id)?.name ?? "team";
+  if (a?.type === "move_to_group") return `move it to “${grp(a.groupId)}”`;
+  if (a?.type === "set_status") return `set ${colName(a.columnId)} to ${label(a.columnId, a.to)}`;
+  if (a?.type === "change_column_value") {
+    const col = columns.find((c) => c.id === a.columnId);
+    const shown = col?.type === "status" ? label(a.columnId, a.value) : a.value;
+    return `set ${colName(a.columnId)} to “${shown}”`;
+  }
+  if (a?.type === "notify") return `notify ${a.target === "department" ? dep(a.targetId) : "person"}`;
+  if (a?.type === "assign_round_robin")
+    return `assign ${colName(a.columnId)} round-robin from ${dep(a.departmentId)}`;
+  if (a?.type === "generate_document")
+    return `generate “${templates.find((t) => t.id === a.templateId)?.name ?? "document"}”`;
+  if (a?.type === "request_invoice")
+    return `request an invoice to Finance (${a.account === "global" ? "Global" : "PTY"})`;
+  if (a?.type === "send_email") return `send an email${a.subject ? ` “${a.subject}”` : ""}`;
+  if (a?.type === "create_item_in_board")
+    return `create an item in another board${a.connect ? " (connected)" : ""}`;
+  if (a?.type === "set_date")
+    return a.mode === "today"
+      ? `set ${colName(a.columnId)} to today`
+      : a.mode === "offset"
+      ? `set ${colName(a.columnId)} to +${a.offsetDays ?? 0} days`
+      : `set ${colName(a.columnId)}${a.date ? ` to ${a.date}` : ""}`;
+  return "do something";
+}
+
 function describe(
   trigger: string,
   action: string,
@@ -188,55 +273,16 @@ function describe(
 ) {
   const t = safe(trigger);
   const a = safe(action);
-  const colName = (id: string) => columns.find((c) => c.id === id)?.name ?? "column";
-  const label = (colId: string, id: string) =>
-    columns.find((c) => c.id === colId)?.labels.find((l) => l.id === id)?.label ?? id;
-  const grp = (id: string) => groups.find((g) => g.id === id)?.name ?? "group";
-  const dep = (id: string) => departments.find((d) => d.id === id)?.name ?? "team";
-
-  let when = "When something happens";
-  if (t?.type === "item_created") when = "When an item is created";
-  else if (t?.type === "status_changes")
-    when = `When ${colName(t.columnId)} changes to ${
-      t.to === "any" ? "any status" : label(t.columnId, t.to)
-    }`;
-  else if (t?.type === "column_changes")
-    when = `When ${colName(t.columnId)} ${t.when === "not_empty" ? "becomes non-empty" : "changes"}`;
-  else if (t?.type === "person_assigned")
-    when = `When a person is assigned in ${colName(t.columnId)}`;
-  else if (t?.type === "item_moved")
-    when = `When an item moves to ${t.groupId === "any" ? "any group" : `“${grp(t.groupId)}”`}`;
-
-  let then = "do something";
-  if (a?.type === "move_to_group") then = `move it to “${grp(a.groupId)}”`;
-  else if (a?.type === "set_status")
-    then = `set ${colName(a.columnId)} to ${label(a.columnId, a.to)}`;
-  else if (a?.type === "notify")
-    then = `notify ${a.target === "department" ? dep(a.targetId) : "person"}`;
-  else if (a?.type === "assign_round_robin")
-    then = `assign ${colName(a.columnId)} round-robin from ${dep(a.departmentId)}`;
-  else if (a?.type === "generate_document")
-    then = `generate “${templates.find((t) => t.id === a.templateId)?.name ?? "document"}”`;
-  else if (a?.type === "request_invoice")
-    then = `request an invoice to Finance (${a.account === "global" ? "Global" : "PTY"})`;
-  else if (a?.type === "send_email")
-    then = `send an email${a.subject ? ` “${a.subject}”` : ""}`;
-  else if (a?.type === "create_item_in_board")
-    then = `create an item in another board${a.connect ? " (connected)" : ""}`;
-  else if (a?.type === "set_date")
-    then =
-      a.mode === "today"
-        ? `set ${colName(a.columnId)} to today`
-        : a.mode === "offset"
-        ? `set ${colName(a.columnId)} to +${a.offsetDays ?? 0} days`
-        : `set ${colName(a.columnId)}${a.date ? ` to ${a.date}` : ""}`;
-
+  const when = describeTrigger(t, columns, groups);
+  const actions: SafeObj[] = a?.type === "multi" && Array.isArray(a.actions) ? a.actions : [a];
+  const then = actions.map((x) => describeAction(x, columns, groups, departments, templates)).join(", then ");
   return { when, then };
 }
-// Parse persisted trigger/action JSON. The shape is intentionally freeform
-// (many rule variants), so callers read known optional fields off the result.
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function safe(s: string): any {
+type SafeObj = any;
+// Parse persisted trigger/action JSON (intentionally freeform shape).
+function safe(s: string): SafeObj {
   try {
     return JSON.parse(s);
   } catch {
@@ -252,6 +298,11 @@ function AutomationCard({
   departments,
   templates,
   onEdit,
+  dragging,
+  onDragStart,
+  onDragEnd,
+  onDropBefore,
+  dragActive,
 }: {
   boardId: string;
   auto: Auto;
@@ -260,23 +311,48 @@ function AutomationCard({
   departments: Dep[];
   templates: Tpl[];
   onEdit: () => void;
+  dragging: boolean;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onDropBefore: () => void;
+  dragActive: boolean;
 }) {
   const [, start] = useTransition();
   const { when, then } = describe(auto.trigger, auto.action, columns, groups, departments, templates);
 
   return (
     <div
-      className={`flex items-center justify-between gap-3 rounded-xl border border-hair bg-white px-4 py-3 shadow-soft ${
-        auto.enabled ? "" : "opacity-60"
-      }`}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = "move";
+        onDragStart();
+      }}
+      onDragEnd={onDragEnd}
+      onDragOver={(e) => {
+        if (dragActive) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        if (!dragActive) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onDropBefore();
+      }}
+      className={`flex items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3 shadow-soft transition ${
+        dragging ? "border-teal opacity-50" : "border-hair"
+      } ${auto.enabled ? "" : "opacity-60"}`}
     >
-      <div className="min-w-0">
-        <p className="truncate text-sm font-semibold text-ink">{auto.name}</p>
-        <p className="mt-0.5 text-xs text-body">
-          <span className="font-medium text-teal-deep">{when}</span>
-          <span className="text-muted"> → </span>
-          <span className="font-medium text-amber">{then}</span>
-        </p>
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="flex-none cursor-grab select-none text-muted active:cursor-grabbing" title="Drag to reorder / change folder">
+          ⠿
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-ink">{auto.name}</p>
+          <p className="mt-0.5 text-xs text-body">
+            <span className="font-medium text-teal-deep">{when}</span>
+            <span className="text-muted"> → </span>
+            <span className="font-medium text-amber">{then}</span>
+          </p>
+        </div>
       </div>
       <div className="flex flex-none items-center gap-3">
         <Toggle
@@ -334,6 +410,113 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
   );
 }
 
+/* ── action draft (one THEN step) ─────────────────── */
+type ActionType =
+  | "move_to_group"
+  | "set_status"
+  | "change_column_value"
+  | "notify"
+  | "assign_round_robin"
+  | "generate_document"
+  | "request_invoice"
+  | "send_email"
+  | "create_item_in_board"
+  | "set_date";
+
+type ActionDraft = {
+  key: string;
+  type: ActionType;
+  groupId?: string;
+  statusCol?: string;
+  statusTo?: string;
+  ccvCol?: string;
+  ccvValue?: string;
+  dept?: string;
+  message?: string;
+  personCol?: string;
+  templateId?: string;
+  account?: string;
+  amountCol?: string;
+  emailCol?: string;
+  subject?: string;
+  body?: string;
+  targetBoard?: string;
+  connect?: boolean;
+  dateCol?: string;
+  dateMode?: "specific" | "today" | "offset";
+  dateValue?: string;
+  dateOffset?: number;
+};
+
+let draftSeq = 0;
+const draftKey = () => `d${++draftSeq}`;
+
+// Convert a persisted Action object into an editable ActionDraft with defaults.
+function toDraft(
+  a: SafeObj,
+  d: { groups: Grp[]; statusCols: Col[]; personCols: Col[]; numberCols: Col[]; emailCols: Col[]; dateCols: Col[]; allColumns: Col[]; boards: { id: string; name: string }[]; boardId: string; departments: Dep[]; templates: Tpl[] }
+): ActionDraft {
+  const t: ActionType = a?.type ?? "move_to_group";
+  return {
+    key: draftKey(),
+    type: t,
+    groupId: a?.groupId ?? d.groups[0]?.id ?? "",
+    statusCol: (t === "set_status" ? a?.columnId : "") || d.statusCols[0]?.id || "",
+    statusTo: (t === "set_status" ? a?.to : "") || d.statusCols[0]?.labels[0]?.id || "",
+    ccvCol: (t === "change_column_value" ? a?.columnId : "") || d.allColumns[0]?.id || "",
+    ccvValue: t === "change_column_value" ? a?.value ?? "" : "",
+    dept: a?.departmentId ?? a?.targetId ?? d.departments[0]?.id ?? "",
+    message: a?.message ?? "",
+    personCol: (t === "assign_round_robin" ? a?.columnId : "") || d.personCols[0]?.id || "",
+    templateId: a?.templateId ?? d.templates[0]?.id ?? "",
+    account: a?.account ?? "pty",
+    amountCol: a?.amountColumnId ?? d.numberCols[0]?.id ?? "",
+    emailCol: (t === "send_email" ? a?.toColumnId : "") || d.emailCols[0]?.id || d.allColumns.find((c) => c.type === "email")?.id || "",
+    subject: t === "send_email" ? a?.subject ?? "" : "",
+    body: t === "send_email" ? a?.body ?? "" : "",
+    targetBoard: (t === "create_item_in_board" ? a?.boardId : "") || d.boards.find((b) => b.id !== d.boardId)?.id || "",
+    connect: t === "create_item_in_board" ? !!a?.connect : true,
+    dateCol: (t === "set_date" ? a?.columnId : "") || d.dateCols[0]?.id || "",
+    dateMode: t === "set_date" ? a?.mode ?? "specific" : "specific",
+    dateValue: t === "set_date" ? a?.date ?? "" : "",
+    dateOffset: t === "set_date" ? a?.offsetDays ?? 7 : 7,
+  };
+}
+
+// Build the persisted Action object from a draft.
+function buildAction(a: ActionDraft): Record<string, unknown> {
+  switch (a.type) {
+    case "move_to_group":
+      return { type: "move_to_group", groupId: a.groupId };
+    case "set_status":
+      return { type: "set_status", columnId: a.statusCol, to: a.statusTo };
+    case "change_column_value":
+      return { type: "change_column_value", columnId: a.ccvCol, value: a.ccvValue ?? "" };
+    case "notify":
+      return { type: "notify", target: "department", targetId: a.dept, message: a.message ?? "" };
+    case "assign_round_robin":
+      return { type: "assign_round_robin", columnId: a.personCol, departmentId: a.dept };
+    case "generate_document":
+      return { type: "generate_document", templateId: a.templateId };
+    case "request_invoice":
+      return { type: "request_invoice", account: a.account, amountColumnId: a.amountCol || undefined };
+    case "send_email":
+      return { type: "send_email", toColumnId: a.emailCol || undefined, subject: a.subject ?? "", body: a.body ?? "" };
+    case "create_item_in_board":
+      return { type: "create_item_in_board", boardId: a.targetBoard, connect: a.connect };
+    case "set_date":
+      return {
+        type: "set_date",
+        columnId: a.dateCol,
+        mode: a.dateMode,
+        ...(a.dateMode === "specific" ? { date: a.dateValue } : {}),
+        ...(a.dateMode === "offset" ? { offsetDays: Number(a.dateOffset) || 0 } : {}),
+      };
+    default:
+      return { type: "move_to_group", groupId: a.groupId };
+  }
+}
+
 /* ── create modal (builder) ───────────────────────── */
 function CreateModal({
   boardId,
@@ -347,6 +530,7 @@ function CreateModal({
   groups,
   departments,
   templates,
+  folderNames,
   existing,
   onClose,
 }: {
@@ -361,14 +545,17 @@ function CreateModal({
   groups: Grp[];
   departments: Dep[];
   templates: Tpl[];
+  folderNames: string[];
   existing?: Auto | null;
   onClose: () => void;
 }) {
   const et = safe(existing?.trigger ?? "{}") ?? {};
   const ea = safe(existing?.action ?? "{}") ?? {};
+  const draftDeps = { groups, statusCols, personCols, numberCols, emailCols, dateCols, allColumns, boards, boardId, departments, templates };
 
   const [name, setName] = useState(existing?.name ?? "");
-  const [folder, setFolder] = useState(existing?.folder ?? "General");
+  const [folder, setFolder] = useState(existing?.folder || "General");
+  const [newFolder, setNewFolder] = useState(false);
   const [, start] = useTransition();
 
   // trigger state
@@ -380,88 +567,24 @@ function CreateModal({
   const [tWhen, setTWhen] = useState<"any" | "not_empty">(et.when ?? "any");
   const [tGroup, setTGroup] = useState(et.groupId ?? "any");
 
-  // action state
-  const [aType, setAType] = useState<
-    | "move_to_group"
-    | "set_status"
-    | "notify"
-    | "assign_round_robin"
-    | "generate_document"
-    | "request_invoice"
-    | "send_email"
-    | "create_item_in_board"
-    | "set_date"
-  >(ea.type ?? "move_to_group");
-  const [aEmailCol, setAEmailCol] = useState(
-    (ea.type === "send_email" ? ea.toColumnId : "") || emailCols[0]?.id || ""
-  );
-  const [aSubject, setASubject] = useState(ea.type === "send_email" ? ea.subject ?? "" : "");
-  const [aBody, setABody] = useState(ea.type === "send_email" ? ea.body ?? "" : "");
-  const [aTargetBoard, setATargetBoard] = useState(
-    (ea.type === "create_item_in_board" ? ea.boardId : "") || boards.find((b) => b.id !== boardId)?.id || ""
-  );
-  const [aConnect, setAConnect] = useState<boolean>(
-    ea.type === "create_item_in_board" ? !!ea.connect : true
-  );
-  const [aGroup, setAGroup] = useState(ea.groupId ?? groups[0]?.id ?? "");
-  const [aStatusCol, setAStatusCol] = useState(
-    (ea.type === "set_status" ? ea.columnId : "") || statusCols[0]?.id || ""
-  );
-  const [aStatusTo, setAStatusTo] = useState(
-    (ea.type === "set_status" ? ea.to : "") || statusCols[0]?.labels[0]?.id || ""
-  );
-  const [aPersonCol, setAPersonCol] = useState(
-    (ea.type === "assign_round_robin" ? ea.columnId : "") || personCols[0]?.id || ""
-  );
-  const [aDept, setADept] = useState(ea.departmentId ?? ea.targetId ?? departments[0]?.id ?? "");
-  const [aMessage, setAMessage] = useState(ea.message ?? "");
-  const [aTemplate, setATemplate] = useState(ea.templateId ?? templates[0]?.id ?? "");
-  const [aAccount, setAAccount] = useState(ea.account ?? "pty");
-  const [aAmountCol, setAAmountCol] = useState(ea.amountColumnId ?? numberCols[0]?.id ?? "");
-  // Set-date action (A2)
-  const [aDateCol, setADateCol] = useState(
-    (ea.type === "set_date" ? ea.columnId : "") || dateCols[0]?.id || ""
-  );
-  const [aDateMode, setADateMode] = useState<"specific" | "today" | "offset">(
-    ea.type === "set_date" ? ea.mode ?? "specific" : "specific"
-  );
-  const [aDateValue, setADateValue] = useState(ea.type === "set_date" ? ea.date ?? "" : "");
-  const [aDateOffset, setADateOffset] = useState<number>(
-    ea.type === "set_date" ? ea.offsetDays ?? 7 : 7
+  // actions state — one or more THEN steps
+  const initialActions: SafeObj[] =
+    ea?.type === "multi" && Array.isArray(ea.actions) ? ea.actions : existing ? [ea] : [{ type: "move_to_group" }];
+  const [actions, setActions] = useState<ActionDraft[]>(
+    initialActions.map((a) => toDraft(a, draftDeps))
   );
 
   const tColObj = statusCols.find((c) => c.id === tCol);
-  const aStatusColObj = statusCols.find((c) => c.id === aStatusCol);
 
-  // Placeholder insertion for the send-email builder (Additional #2). Tokens map
-  // to board column names ({{Item}} = item name); the engine fills them at send.
-  const subjectRef = useRef<HTMLInputElement>(null);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
-  const [focusField, setFocusField] = useState<"subject" | "body">("body");
-
-  function insertPlaceholder(token: string) {
-    const wrapped = `{{${token}}}`;
-    const isSubject = focusField === "subject";
-    const el = isSubject ? subjectRef.current : bodyRef.current;
-    const cur = isSubject ? aSubject : aBody;
-    const setter = isSubject ? setASubject : setABody;
-    const startPos = el?.selectionStart ?? cur.length;
-    const endPos = el?.selectionEnd ?? cur.length;
-    const next = cur.slice(0, startPos) + wrapped + cur.slice(endPos);
-    setter(next);
-    requestAnimationFrame(() => {
-      if (!el) return;
-      el.focus();
-      const pos = startPos + wrapped.length;
-      el.setSelectionRange(pos, pos);
-    });
+  function patchAction(key: string, patch: Partial<ActionDraft>) {
+    setActions((list) => list.map((a) => (a.key === key ? { ...a, ...patch } : a)));
   }
-
-  // Distinct placeholders offered: the item name + every board column.
-  const placeholderTokens = [
-    "Item",
-    ...allColumns.map((c) => c.name).filter((n, i, arr) => arr.indexOf(n) === i),
-  ];
+  function addAction() {
+    setActions((list) => [...list, toDraft({ type: "move_to_group" }, draftDeps)]);
+  }
+  function removeAction(key: string) {
+    setActions((list) => (list.length <= 1 ? list : list.filter((a) => a.key !== key)));
+  }
 
   function build() {
     let trigger: Record<string, unknown>;
@@ -485,45 +608,11 @@ function CreateModal({
         trigger = { type: "item_created" };
     }
 
-    let action: Record<string, unknown>;
-    switch (aType) {
-      case "move_to_group":
-        action = { type: "move_to_group", groupId: aGroup };
-        break;
-      case "set_status":
-        action = { type: "set_status", columnId: aStatusCol, to: aStatusTo };
-        break;
-      case "notify":
-        action = { type: "notify", target: "department", targetId: aDept, message: aMessage };
-        break;
-      case "assign_round_robin":
-        action = { type: "assign_round_robin", columnId: aPersonCol, departmentId: aDept };
-        break;
-      case "generate_document":
-        action = { type: "generate_document", templateId: aTemplate };
-        break;
-      case "request_invoice":
-        action = { type: "request_invoice", account: aAccount, amountColumnId: aAmountCol || undefined };
-        break;
-      case "send_email":
-        action = { type: "send_email", toColumnId: aEmailCol || undefined, subject: aSubject, body: aBody };
-        break;
-      case "create_item_in_board":
-        action = { type: "create_item_in_board", boardId: aTargetBoard, connect: aConnect };
-        break;
-      case "set_date":
-        action = {
-          type: "set_date",
-          columnId: aDateCol,
-          mode: aDateMode,
-          ...(aDateMode === "specific" ? { date: aDateValue } : {}),
-          ...(aDateMode === "offset" ? { offsetDays: Number(aDateOffset) || 0 } : {}),
-        };
-        break;
-      default:
-        action = { type: "move_to_group", groupId: aGroup };
-    }
-    const input = { name, folder, trigger, action };
+    const built = actions.map(buildAction);
+    // Backward-compatible: store a single action directly, else a multi wrapper.
+    const action = built.length === 1 ? built[0] : { type: "multi", actions: built };
+    const finalFolder = folder === "General" ? "" : folder.trim();
+    const input = { name, folder: finalFolder, trigger, action };
     start(() =>
       existing
         ? void updateAutomation(boardId, existing.id, input)
@@ -535,25 +624,60 @@ function CreateModal({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <h2 className="text-lg font-bold text-ink">{existing ? "Edit automation" : "New automation"}</h2>
-        <p className="mt-0.5 text-sm text-muted">Define a trigger and an action.</p>
+        <p className="mt-0.5 text-sm text-muted">Define a trigger and one or more actions.</p>
 
-        <div className="mt-4 grid gap-3">
+        <div className="mt-4 grid gap-3 overflow-y-auto scroll-thin pr-0.5">
           <div className="grid grid-cols-2 gap-3">
             <Labeled label="Name">
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Move to Contacting" className={inp} />
             </Labeled>
             <Labeled label="Folder">
-              <input value={folder} onChange={(e) => setFolder(e.target.value)} className={inp} />
+              {newFolder ? (
+                <div className="flex gap-1">
+                  <input
+                    autoFocus
+                    value={folder}
+                    onChange={(e) => setFolder(e.target.value)}
+                    placeholder="New folder name"
+                    className={inp}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewFolder(false);
+                      setFolder(existing?.folder || "General");
+                    }}
+                    className="flex-none rounded-lg border border-hair px-2 text-xs text-muted hover:bg-canvas"
+                    title="Cancel new folder"
+                  >
+                    ↩
+                  </button>
+                </div>
+              ) : (
+                <select
+                  value={folderNames.includes(folder) ? folder : "General"}
+                  onChange={(e) => {
+                    if (e.target.value === "__new__") {
+                      setNewFolder(true);
+                      setFolder("");
+                    } else setFolder(e.target.value);
+                  }}
+                  className={inp}
+                >
+                  {folderNames.map((f) => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                  <option value="__new__">➕ New folder…</option>
+                </select>
+              )}
             </Labeled>
           </div>
 
           {/* WHEN */}
           <div className="rounded-xl border border-hair bg-canvas/50 p-3">
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-teal-deep">
-              When
-            </p>
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-teal-deep">When</p>
             <select value={tType} onChange={(e) => setTType(e.target.value as typeof tType)} className={inp}>
               <option value="status_changes">A status changes</option>
               <option value="item_created">An item is created</option>
@@ -607,209 +731,47 @@ function CreateModal({
             )}
           </div>
 
-          {/* THEN */}
-          <div className="rounded-xl border border-hair bg-canvas/50 p-3">
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-amber">
-              Then
-            </p>
-            <select value={aType} onChange={(e) => setAType(e.target.value as typeof aType)} className={inp}>
-              <option value="move_to_group">Move item to group</option>
-              <option value="set_status">Set a status</option>
-              <option value="notify">Notify a department</option>
-              <option value="assign_round_robin">Assign person (round robin)</option>
-              <option value="generate_document">Generate a document</option>
-              <option value="request_invoice">Request an invoice (to Finance)</option>
-              <option value="send_email">Send an email</option>
-              <option value="create_item_in_board">Create item in another board</option>
-              <option value="set_date">Set a date</option>
-            </select>
-
-            {aType === "move_to_group" && (
-              <select value={aGroup} onChange={(e) => setAGroup(e.target.value)} className={`${inp} mt-2`}>
-                {groups.map((g) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
-            )}
-            {aType === "set_status" && (
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <select
-                  value={aStatusCol}
-                  onChange={(e) => {
-                    setAStatusCol(e.target.value);
-                    const c = statusCols.find((x) => x.id === e.target.value);
-                    setAStatusTo(c?.labels[0]?.id ?? "");
-                  }}
-                  className={inp}
-                >
-                  {statusCols.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-                <select value={aStatusTo} onChange={(e) => setAStatusTo(e.target.value)} className={inp}>
-                  {aStatusColObj?.labels.map((l) => (
-                    <option key={l.id} value={l.id}>{l.label}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {aType === "notify" && (
-              <div className="mt-2 grid gap-2">
-                <select value={aDept} onChange={(e) => setADept(e.target.value)} className={inp}>
-                  {departments.map((d) => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
-                <input value={aMessage} onChange={(e) => setAMessage(e.target.value)} placeholder="Message…" className={inp} />
-              </div>
-            )}
-            {aType === "assign_round_robin" && (
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <select value={aPersonCol} onChange={(e) => setAPersonCol(e.target.value)} className={inp}>
-                  {personCols.length === 0 && <option value="">No person column</option>}
-                  {personCols.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-                <select value={aDept} onChange={(e) => setADept(e.target.value)} className={inp}>
-                  {departments.map((d) => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {aType === "generate_document" && (
-              <select value={aTemplate} onChange={(e) => setATemplate(e.target.value)} className={`${inp} mt-2`}>
-                {templates.length === 0 && <option value="">No templates — create one via 📄 Docs</option>}
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-            )}
-            {aType === "request_invoice" && (
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <select value={aAccount} onChange={(e) => setAAccount(e.target.value)} className={inp}>
-                  <option value="pty">Osphine PTY</option>
-                  <option value="global">Osphine Global</option>
-                </select>
-                <select value={aAmountCol} onChange={(e) => setAAmountCol(e.target.value)} className={inp}>
-                  <option value="">Amount: none</option>
-                  {numberCols.map((c) => (
-                    <option key={c.id} value={c.id}>Amount: {c.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {aType === "send_email" && (
-              <div className="mt-2 grid gap-2">
-                <select value={aEmailCol} onChange={(e) => setAEmailCol(e.target.value)} className={inp}>
-                  {emailCols.length === 0 && <option value="">First email column on the item</option>}
-                  {emailCols.map((c) => (
-                    <option key={c.id} value={c.id}>Send to: {c.name}</option>
-                  ))}
-                </select>
-                <input
-                  ref={subjectRef}
-                  value={aSubject}
-                  onChange={(e) => setASubject(e.target.value)}
-                  onFocus={() => setFocusField("subject")}
-                  placeholder="Subject — e.g. Welcome {{Item}}!"
-                  className={inp}
-                />
-                <textarea
-                  ref={bodyRef}
-                  value={aBody}
-                  onChange={(e) => setABody(e.target.value)}
-                  onFocus={() => setFocusField("body")}
-                  rows={4}
-                  placeholder={"Body — use the chips below to insert live data.\n\nHi {{Item}},\nThank you for registering."}
-                  className={`${inp} resize-y`}
-                />
-                {/* Insert-placeholder chips (Additional #2) */}
-                <div>
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
-                    Insert data into {focusField === "subject" ? "subject" : "body"}
-                  </p>
-                  <div className="flex flex-wrap gap-1">
-                    {placeholderTokens.map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => insertPlaceholder(t)}
-                        className="rounded-full border border-hair px-2 py-0.5 text-[11px] font-medium text-teal hover:border-teal hover:bg-teal/5"
-                        title={`Insert {{${t}}}`}
-                      >
-                        + {t === "Item" ? "Item name" : t}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {/* Live preview */}
-                <div className="rounded-lg border border-hair bg-white p-2.5">
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Preview (sample data)</p>
-                  <p className="text-xs font-semibold text-ink">{previewText(aSubject) || "(no subject)"}</p>
-                  <p className="mt-1 whitespace-pre-wrap text-xs text-body">{previewText(aBody) || "(empty body)"}</p>
-                </div>
-              </div>
-            )}
-            {aType === "create_item_in_board" && (
-              <div className="mt-2 grid gap-2">
-                <select value={aTargetBoard} onChange={(e) => setATargetBoard(e.target.value)} className={inp}>
-                  {boards.filter((b) => b.id !== boardId).length === 0 && <option value="">No other boards</option>}
-                  {boards.filter((b) => b.id !== boardId).map((b) => (
-                    <option key={b.id} value={b.id}>Create in: {b.name}</option>
-                  ))}
-                </select>
-                <label className="flex items-center gap-2 text-sm text-body">
-                  <input type="checkbox" checked={aConnect} onChange={(e) => setAConnect(e.target.checked)} />
-                  Connect the two items (enables mirror columns)
-                </label>
-              </div>
-            )}
-            {aType === "set_date" && (
-              <div className="mt-2 grid gap-2">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-body">Date column to update</label>
-                  <select value={aDateCol} onChange={(e) => setADateCol(e.target.value)} className={inp}>
-                    {dateCols.length === 0 && <option value="">No date column on this board</option>}
-                    {dateCols.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-body">Set to</label>
-                  <select
-                    value={aDateMode}
-                    onChange={(e) => setADateMode(e.target.value as "specific" | "today" | "offset")}
-                    className={inp}
+          {/* THEN — one block per action */}
+          {actions.map((a, i) => (
+            <div key={a.key} className="rounded-xl border border-hair bg-canvas/50 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="font-mono text-[10px] uppercase tracking-widest text-amber">
+                  {i === 0 ? "Then" : "And then"}
+                </p>
+                {actions.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeAction(a.key)}
+                    className="text-xs text-muted hover:text-danger"
                   >
-                    <option value="specific">A specific date</option>
-                    <option value="today">Today (when it runs)</option>
-                    <option value="offset">In N days from today</option>
-                  </select>
-                </div>
-                {aDateMode === "specific" && (
-                  <input type="date" value={aDateValue} onChange={(e) => setADateValue(e.target.value)} className={inp} />
-                )}
-                {aDateMode === "offset" && (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      value={aDateOffset}
-                      onChange={(e) => setADateOffset(Number(e.target.value))}
-                      className={`${inp} w-24`}
-                    />
-                    <span className="text-sm text-muted">days from today</span>
-                  </div>
-                )}
-                {dateCols.length === 0 && (
-                  <p className="text-xs text-amber">Add a Date column to the board to use this action.</p>
+                    ✕ Remove
+                  </button>
                 )}
               </div>
-            )}
-          </div>
+              <ActionEditor
+                a={a}
+                onPatch={(patch) => patchAction(a.key, patch)}
+                statusCols={statusCols}
+                personCols={personCols}
+                numberCols={numberCols}
+                dateCols={dateCols}
+                allColumns={allColumns}
+                boards={boards}
+                boardId={boardId}
+                groups={groups}
+                departments={departments}
+                templates={templates}
+              />
+            </div>
+          ))}
+
+          <button
+            type="button"
+            onClick={addAction}
+            className="rounded-lg border border-dashed border-hair px-3 py-2 text-xs font-semibold text-teal hover:border-teal hover:bg-teal/5"
+          >
+            + Add action
+          </button>
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
@@ -826,6 +788,307 @@ function CreateModal({
         </div>
       </div>
     </div>
+  );
+}
+
+/* ── one THEN action's fields ─────────────────────── */
+function ActionEditor({
+  a,
+  onPatch,
+  statusCols,
+  personCols,
+  numberCols,
+  dateCols,
+  allColumns,
+  boards,
+  boardId,
+  groups,
+  departments,
+  templates,
+}: {
+  a: ActionDraft;
+  onPatch: (patch: Partial<ActionDraft>) => void;
+  statusCols: Col[];
+  personCols: Col[];
+  numberCols: Col[];
+  dateCols: Col[];
+  allColumns: Col[];
+  boards: { id: string; name: string }[];
+  boardId: string;
+  groups: Grp[];
+  departments: Dep[];
+  templates: Tpl[];
+}) {
+  const subjectRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const [focusField, setFocusField] = useState<"subject" | "body">("body");
+
+  function insertPlaceholder(token: string) {
+    const wrapped = `{{${token}}}`;
+    const isSubject = focusField === "subject";
+    const el = isSubject ? subjectRef.current : bodyRef.current;
+    const cur = (isSubject ? a.subject : a.body) ?? "";
+    const startPos = el?.selectionStart ?? cur.length;
+    const endPos = el?.selectionEnd ?? cur.length;
+    const next = cur.slice(0, startPos) + wrapped + cur.slice(endPos);
+    onPatch(isSubject ? { subject: next } : { body: next });
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      const pos = startPos + wrapped.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }
+
+  const placeholderTokens = ["Item", ...allColumns.map((c) => c.name).filter((n, i, arr) => arr.indexOf(n) === i)];
+  const ccvColObj = allColumns.find((c) => c.id === a.ccvCol);
+  const aStatusColObj = statusCols.find((c) => c.id === a.statusCol);
+
+  return (
+    <>
+      <select value={a.type} onChange={(e) => onPatch({ type: e.target.value as ActionType })} className={inp}>
+        <option value="move_to_group">Move item to group</option>
+        <option value="set_status">Set a status</option>
+        <option value="change_column_value">Change a column value</option>
+        <option value="notify">Notify a department</option>
+        <option value="assign_round_robin">Assign person (round robin)</option>
+        <option value="generate_document">Generate a document</option>
+        <option value="request_invoice">Request an invoice (to Finance)</option>
+        <option value="send_email">Send an email</option>
+        <option value="create_item_in_board">Create item in another board</option>
+        <option value="set_date">Set a date</option>
+      </select>
+
+      {a.type === "move_to_group" && (
+        <select value={a.groupId} onChange={(e) => onPatch({ groupId: e.target.value })} className={`${inp} mt-2`}>
+          {groups.map((g) => (
+            <option key={g.id} value={g.id}>{g.name}</option>
+          ))}
+        </select>
+      )}
+
+      {a.type === "set_status" && (
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <select
+            value={a.statusCol}
+            onChange={(e) => {
+              const c = statusCols.find((x) => x.id === e.target.value);
+              onPatch({ statusCol: e.target.value, statusTo: c?.labels[0]?.id ?? "" });
+            }}
+            className={inp}
+          >
+            {statusCols.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <select value={a.statusTo} onChange={(e) => onPatch({ statusTo: e.target.value })} className={inp}>
+            {aStatusColObj?.labels.map((l) => (
+              <option key={l.id} value={l.id}>{l.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {a.type === "change_column_value" && (
+        <div className="mt-2 grid gap-2">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-body">Which column?</label>
+            <select
+              value={a.ccvCol}
+              onChange={(e) => {
+                const c = allColumns.find((x) => x.id === e.target.value);
+                onPatch({ ccvCol: e.target.value, ccvValue: c?.type === "status" ? c.labels[0]?.id ?? "" : "" });
+              }}
+              className={inp}
+            >
+              {allColumns.map((c) => (
+                <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-body">New value</label>
+            {ccvColObj?.type === "status" ? (
+              <select value={a.ccvValue} onChange={(e) => onPatch({ ccvValue: e.target.value })} className={inp}>
+                {ccvColObj.labels.map((l) => (
+                  <option key={l.id} value={l.id}>{l.label}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={a.ccvValue ?? ""}
+                onChange={(e) => onPatch({ ccvValue: e.target.value })}
+                placeholder={ccvColObj?.type === "email" ? "name@email.com" : "Value to set"}
+                className={inp}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {a.type === "notify" && (
+        <div className="mt-2 grid gap-2">
+          <select value={a.dept} onChange={(e) => onPatch({ dept: e.target.value })} className={inp}>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+          <input value={a.message ?? ""} onChange={(e) => onPatch({ message: e.target.value })} placeholder="Message…" className={inp} />
+        </div>
+      )}
+
+      {a.type === "assign_round_robin" && (
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <select value={a.personCol} onChange={(e) => onPatch({ personCol: e.target.value })} className={inp}>
+            {personCols.length === 0 && <option value="">No person column</option>}
+            {personCols.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <select value={a.dept} onChange={(e) => onPatch({ dept: e.target.value })} className={inp}>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {a.type === "generate_document" && (
+        <select value={a.templateId} onChange={(e) => onPatch({ templateId: e.target.value })} className={`${inp} mt-2`}>
+          {templates.length === 0 && <option value="">No templates — create one via 📄 Docs</option>}
+          {templates.map((t) => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
+      )}
+
+      {a.type === "request_invoice" && (
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <select value={a.account} onChange={(e) => onPatch({ account: e.target.value })} className={inp}>
+            <option value="pty">Osphine PTY</option>
+            <option value="global">Osphine Global</option>
+          </select>
+          <select value={a.amountCol} onChange={(e) => onPatch({ amountCol: e.target.value })} className={inp}>
+            <option value="">Amount: none</option>
+            {numberCols.map((c) => (
+              <option key={c.id} value={c.id}>Amount: {c.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {a.type === "send_email" && (
+        <div className="mt-2 grid gap-2">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-body">Send to (column holding the email)</label>
+            <select value={a.emailCol} onChange={(e) => onPatch({ emailCol: e.target.value })} className={inp}>
+              <option value="">First email column on the item</option>
+              {/* Any column can hold the address (e.g. a text "Approver Email"). */}
+              {allColumns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}{c.type === "email" ? "" : ` (${c.type})`}
+                </option>
+              ))}
+            </select>
+          </div>
+          <input
+            ref={subjectRef}
+            value={a.subject ?? ""}
+            onChange={(e) => onPatch({ subject: e.target.value })}
+            onFocus={() => setFocusField("subject")}
+            placeholder="Subject — e.g. Welcome {{Item}}!"
+            className={inp}
+          />
+          <textarea
+            ref={bodyRef}
+            value={a.body ?? ""}
+            onChange={(e) => onPatch({ body: e.target.value })}
+            onFocus={() => setFocusField("body")}
+            rows={4}
+            placeholder={"Body — use the chips below to insert live data.\n\nHi {{Item}},\nThank you for registering."}
+            className={`${inp} resize-y`}
+          />
+          <div>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+              Insert data into {focusField === "subject" ? "subject" : "body"}
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {placeholderTokens.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => insertPlaceholder(t)}
+                  className="rounded-full border border-hair px-2 py-0.5 text-[11px] font-medium text-teal hover:border-teal hover:bg-teal/5"
+                  title={`Insert {{${t}}}`}
+                >
+                  + {t === "Item" ? "Item name" : t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-lg border border-hair bg-white p-2.5">
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Preview (sample data)</p>
+            <p className="text-xs font-semibold text-ink">{previewText(a.subject ?? "") || "(no subject)"}</p>
+            <p className="mt-1 whitespace-pre-wrap text-xs text-body">{previewText(a.body ?? "") || "(empty body)"}</p>
+          </div>
+        </div>
+      )}
+
+      {a.type === "create_item_in_board" && (
+        <div className="mt-2 grid gap-2">
+          <select value={a.targetBoard} onChange={(e) => onPatch({ targetBoard: e.target.value })} className={inp}>
+            {boards.filter((b) => b.id !== boardId).length === 0 && <option value="">No other boards</option>}
+            {boards.filter((b) => b.id !== boardId).map((b) => (
+              <option key={b.id} value={b.id}>Create in: {b.name}</option>
+            ))}
+          </select>
+          <label className="flex items-center gap-2 text-sm text-body">
+            <input type="checkbox" checked={!!a.connect} onChange={(e) => onPatch({ connect: e.target.checked })} />
+            Connect the two items (enables mirror columns)
+          </label>
+        </div>
+      )}
+
+      {a.type === "set_date" && (
+        <div className="mt-2 grid gap-2">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-body">Date column to update</label>
+            <select value={a.dateCol} onChange={(e) => onPatch({ dateCol: e.target.value })} className={inp}>
+              {dateCols.length === 0 && <option value="">No date column on this board</option>}
+              {dateCols.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-body">Set to</label>
+            <select value={a.dateMode} onChange={(e) => onPatch({ dateMode: e.target.value as "specific" | "today" | "offset" })} className={inp}>
+              <option value="specific">A specific date</option>
+              <option value="today">Today (when it runs)</option>
+              <option value="offset">In N days from today</option>
+            </select>
+          </div>
+          {a.dateMode === "specific" && (
+            <input type="date" value={a.dateValue ?? ""} onChange={(e) => onPatch({ dateValue: e.target.value })} className={inp} />
+          )}
+          {a.dateMode === "offset" && (
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                value={a.dateOffset ?? 7}
+                onChange={(e) => onPatch({ dateOffset: Number(e.target.value) })}
+                className={`${inp} w-24`}
+              />
+              <span className="text-sm text-muted">days from today</span>
+            </div>
+          )}
+          {dateCols.length === 0 && (
+            <p className="text-xs text-amber">Add a Date column to the board to use this action.</p>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
