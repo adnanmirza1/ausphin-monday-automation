@@ -332,6 +332,9 @@ export function BoardDashboard({
                 <ProgressWidget
                   config={w}
                   board={board}
+                  currentBoardId={boardId}
+                  dashboardBoardIds={connectedBoards}
+                  dashboardFilters={dashFilters}
                   readOnly={readOnly}
                   settingsOpen={settingsId === w.id}
                   onCloseSettings={() => setSettingsId(null)}
@@ -373,7 +376,18 @@ export function BoardDashboard({
                     large
                   />
                 ) : w.type === "progress" ? (
-                  <ProgressWidget config={w} board={board} readOnly settingsOpen={false} onCloseSettings={() => {}} onChange={() => {}} large />
+                  <ProgressWidget
+                    config={w}
+                    board={board}
+                    currentBoardId={boardId}
+                    dashboardBoardIds={connectedBoards}
+                    dashboardFilters={dashFilters}
+                    readOnly
+                    settingsOpen={false}
+                    onCloseSettings={() => {}}
+                    onChange={() => {}}
+                    large
+                  />
                 ) : (
                   <PresetWidget type={w.type} summary={summary} />
                 )}
@@ -1416,10 +1430,13 @@ function buildSummary(board: BoardData): Summary {
   };
 }
 
-/* ── Progress widget (customizable, A7) ─────────────────────────────────────── */
+/* ── Progress widget (customizable + filterable, A7) ────────────────────────── */
 function ProgressWidget({
   config,
   board,
+  currentBoardId,
+  dashboardBoardIds,
+  dashboardFilters,
   readOnly,
   settingsOpen,
   onCloseSettings,
@@ -1428,36 +1445,65 @@ function ProgressWidget({
 }: {
   config: WidgetConfig;
   board: BoardData;
+  currentBoardId: string;
+  dashboardBoardIds?: string[];
+  dashboardFilters?: ChartFilter[];
   readOnly: boolean;
   settingsOpen: boolean;
   onCloseSettings: () => void;
   onChange: (patch: Partial<WidgetConfig>) => void;
   large?: boolean;
 }) {
-  const statusCols = board.columns.filter((c) => c.type === "status");
-  // Selected status column by NAME (fall back to the first status column).
-  const col =
-    statusCols.find((c) => c.name === config.statusColumn) ?? statusCols[0] ?? null;
-  // Labels counted as "complete" — default to a label literally named "done".
-  const doneLabels =
-    config.doneLabels && config.doneLabels.length
-      ? config.doneLabels
-      : col?.labels.filter((l) => l.label.toLowerCase() === "done").map((l) => l.id) ??
-        [];
+  // Data source: the widget's own boards, else the dashboard's connected boards,
+  // else the current board — same precedence as chart widgets.
+  const boardIds = config.boardIds?.length
+    ? config.boardIds
+    : dashboardBoardIds?.length
+    ? dashboardBoardIds
+    : [currentBoardId];
+  const [data, setData] = useState<DashData | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    getDashboardRows(boardIds)
+      .then((d) => alive && setData(d))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardIds.join(",")]);
 
-  const items = board.groups.flatMap((g) => g.items);
-  let done = 0;
-  if (col) {
-    for (const it of items) {
-      const v = it.cells[col.id]?.value;
-      if (v && doneLabels.includes(v)) done += 1;
-    }
-  }
-  const denom = items.length; // % of ALL items that are complete (monday-style)
+  const statusColumns = (data?.columns ?? []).filter((c) => c.type === "status");
+  const colName =
+    config.statusColumn && statusColumns.some((c) => c.name === config.statusColumn)
+      ? config.statusColumn
+      : statusColumns[0]?.name ?? "";
+
+  const allRows = data?.rows ?? [];
+  // Distinct label values seen for the chosen status column (for the chips).
+  const options = colName
+    ? [...new Set(allRows.map((r) => r.text[colName]).filter((v) => v))]
+    : [];
+  // Labels counted as "complete": explicit config, else auto-detect "Done".
+  const doneLabels =
+    config.doneLabels !== undefined
+      ? config.doneLabels
+      : options.filter((v) => v.toLowerCase() === "done");
+
+  // Apply the dashboard-level filters + this widget's own data filters (A7).
+  const filtered = allRows.filter(
+    (r) => rowsPass(r.text, dashboardFilters) && rowsPass(r.text, config.filters)
+  );
+  const denom = filtered.length;
+  const done = colName ? filtered.filter((r) => doneLabels.includes(r.text[colName])).length : 0;
   const pct = denom ? Math.min(100, Math.round((done / denom) * 100)) : 0;
-  const doneNames = col
-    ? col.labels.filter((l) => doneLabels.includes(l.id)).map((l) => l.label).join(", ")
-    : "";
+
+  // Colour lookup for a status value (from the current board's labels).
+  const colorOf = (val: string) =>
+    board.columns.find((c) => c.type === "status" && c.name === colName)?.labels.find((l) => l.label === val)?.color ??
+    "#8792A2";
 
   if (settingsOpen && !readOnly) {
     return (
@@ -1465,43 +1511,49 @@ function ProgressWidget({
         <div>
           <label className="mb-1 block text-xs font-semibold text-body">Status column</label>
           <select
-            value={col?.name ?? ""}
-            onChange={(e) => onChange({ statusColumn: e.target.value, doneLabels: [] })}
+            value={colName}
+            onChange={(e) => onChange({ statusColumn: e.target.value, doneLabels: undefined })}
             className={selCls}
           >
-            {statusCols.length === 0 && <option value="">No status column</option>}
-            {statusCols.map((c) => (
-              <option key={c.id} value={c.name}>{c.name}</option>
+            {statusColumns.length === 0 && <option value="">No status column</option>}
+            {statusColumns.map((c) => (
+              <option key={c.name} value={c.name}>{c.name}</option>
             ))}
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-xs font-semibold text-body">
-            Count these as complete
-          </label>
+          <label className="mb-1 block text-xs font-semibold text-body">Count these as complete</label>
           <div className="flex flex-wrap gap-1.5">
-            {col?.labels.map((l) => {
-              const on = doneLabels.includes(l.id);
+            {options.map((v) => {
+              const on = doneLabels.includes(v);
               return (
                 <button
-                  key={l.id}
+                  key={v}
                   type="button"
                   onClick={() =>
-                    onChange({
-                      doneLabels: on ? doneLabels.filter((x) => x !== l.id) : [...doneLabels, l.id],
-                    })
+                    onChange({ doneLabels: on ? doneLabels.filter((x) => x !== v) : [...doneLabels, v] })
                   }
                   className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${on ? "border-transparent text-white" : "border-hair text-body"}`}
-                  style={on ? { background: l.color } : undefined}
+                  style={on ? { background: colorOf(v) } : undefined}
                 >
-                  <span className={on ? "" : "opacity-50"}>{on ? "✓" : "○"}</span> {l.label}
+                  <span className={on ? "" : "opacity-50"}>{on ? "✓" : "○"}</span> {v}
                 </button>
               );
             })}
-            {col && col.labels.length === 0 && (
-              <span className="text-xs text-muted">This column has no labels.</span>
-            )}
+            {options.length === 0 && <span className="text-xs text-muted">No values yet.</span>}
           </div>
+        </div>
+        {/* Data filters — same editor charts use (A7 "option to filter data") */}
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-body">
+            Filter data{config.filters?.length ? ` · ${config.filters.length}` : ""}
+          </label>
+          <FilterEditor
+            columns={data?.columns ?? []}
+            rows={allRows.map((r) => r.text)}
+            value={config.filters ?? []}
+            onChange={(f) => onChange({ filters: f })}
+          />
         </div>
         <div className="flex justify-end">
           <button
@@ -1515,21 +1567,28 @@ function ProgressWidget({
     );
   }
 
-  if (!col) return <Empty />;
+  if (loading && !data) return <p className="py-6 text-center text-sm text-muted">Loading…</p>;
+  if (!colName) return <Empty />;
+  const doneNames = doneLabels.join(", ");
   return (
-    <div className={`flex items-center gap-4 ${large ? "scale-125 py-6" : ""}`}>
-      <Ring pct={pct} />
-      <div>
-        <p className="text-2xl font-extrabold text-ink tabular-nums">{pct}%</p>
-        <p className="text-xs text-muted">
-          {done} of {denom} {denom === 1 ? "item" : "items"} complete
-        </p>
-        {doneNames && (
-          <p className="mt-0.5 text-[11px] text-muted">
-            {col.name}: {doneNames}
+    <div>
+      <div className={`flex items-center gap-4 ${large ? "scale-125 py-6" : ""}`}>
+        <Ring pct={pct} />
+        <div>
+          <p className="text-2xl font-extrabold text-ink tabular-nums">{pct}%</p>
+          <p className="text-xs text-muted">
+            {done} of {denom} {denom === 1 ? "item" : "items"} complete
           </p>
-        )}
+          {doneNames && (
+            <p className="mt-0.5 text-[11px] text-muted">
+              {colName}: {doneNames}
+            </p>
+          )}
+        </div>
       </div>
+      {config.filters?.length ? (
+        <p className="mt-2 text-[11px] text-teal-deep">▽ {config.filters.length} filter{config.filters.length === 1 ? "" : "s"} applied</p>
+      ) : null}
     </div>
   );
 }
