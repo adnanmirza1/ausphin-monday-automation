@@ -15,7 +15,7 @@ export function LoginForm() {
           type="email"
           autoComplete="email"
           required
-          defaultValue="adnan.mustafa@toptal.com"
+          defaultValue="demo@visume.com"
           className="rounded-lg border border-hair bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-teal"
         />
       </label>
@@ -27,7 +27,7 @@ export function LoginForm() {
           type="password"
           autoComplete="current-password"
           required
-          defaultValue="password"
+          defaultValue="demo123"
           className="rounded-lg border border-hair bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-teal"
         />
       </label>

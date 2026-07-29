@@ -18,7 +18,7 @@ npx prisma migrate deploy      # creates all tables
 npm run db:seed                # demo org + admin + sample boards  (optional)
 ```
 
-> `db:seed` creates the demo admin `adnan.mustafa@toptal.com / password`.
+> `db:seed` creates the demo admin `demo@visume.com / demo123`.
 > For real production, create your own admin and skip/replace the seed.
 
 ## 3. Push to GitHub

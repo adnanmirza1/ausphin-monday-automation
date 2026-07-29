@@ -56,12 +56,12 @@ async function main() {
   }
 
   // Users
-  const pw = await bcrypt.hash("password", 10);
+  const pw = await bcrypt.hash("demo123", 10);
   const admin = await db.user.create({
     data: {
       orgId: org.id,
-      email: "adnan.mustafa@toptal.com",
-      name: "Adnan Mustafa",
+      email: "demo@visume.com",
+      name: "Visume Admin",
       passwordHash: pw,
       avatarColor: "#C0392B",
       status: "active",
@@ -198,7 +198,7 @@ async function main() {
 
   console.log("Seed complete:");
   console.log(`  Org: ${org.name}`);
-  console.log(`  Admin login: adnan.mustafa@toptal.com / password`);
+  console.log(`  Admin login: demo@visume.com / demo123`);
   console.log(`  Environments: 3 · Sales board with ${sampleItems.length} items`);
 }
 

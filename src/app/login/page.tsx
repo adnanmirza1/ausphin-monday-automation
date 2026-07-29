@@ -47,7 +47,7 @@ export default async function LoginPage() {
 
           <div className="mt-6 rounded-lg border border-hair bg-white p-3 text-xs text-muted">
             <span className="font-semibold text-body">Demo login</span> —{" "}
-            adnan.mustafa@toptal.com / password
+            demo@visume.com / demo123
           </div>
         </div>
       </div>

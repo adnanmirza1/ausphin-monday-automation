@@ -35,7 +35,7 @@ npm run db:seed        # demo org, users, sample boards
 npm run dev
 ```
 
-Demo login: `adnan.mustafa@toptal.com` / `password`
+Demo login: `demo@visume.com` / `demo123`
 
 ## Environment variables
 
