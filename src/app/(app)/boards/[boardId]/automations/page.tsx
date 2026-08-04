@@ -31,8 +31,8 @@ export default async function AutomationsPage({
   });
   const templates = await db.docTemplate.findMany({
     where: { boardId: board.id },
-    orderBy: { createdAt: "asc" },
-    select: { id: true, name: true },
+    orderBy: [{ name: "asc" }],
+    select: { id: true, name: true, reference: true, viewName: true, employer: true, active: true },
   });
   const boards = await db.board.findMany({
     where: { environment: { orgId: user.orgId }, archivedAt: null },

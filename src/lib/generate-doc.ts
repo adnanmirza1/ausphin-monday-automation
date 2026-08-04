@@ -2,7 +2,28 @@ import "server-only";
 import { db } from "@/lib/db";
 import { renderDocumentHtml, buildBlocks, type DocValue } from "@/lib/docgen";
 import type { StatusLabel } from "@/lib/constants";
-import { urlDisplay, parseFileValue } from "@/lib/cell-values";
+import { urlDisplay, parseFileValue, type FileValue } from "@/lib/cell-values";
+import { putFile, fetchFileBuffer } from "@/lib/blob-storage";
+import { fillDocx, DOCX_MIME } from "@/lib/docx-fill";
+
+function safeName(s: string): string {
+  return s.replace(/[^\w.-]+/g, "_").replace(/_+/g, "_").slice(0, 80) || "document";
+}
+
+// Append a generated file to a File column's cell value (JSON array of files).
+async function appendToFileColumn(itemId: string, columnId: string, file: FileValue) {
+  const existing = await db.cell.findUnique({
+    where: { itemId_columnId: { itemId, columnId } },
+    select: { value: true },
+  });
+  const list = parseFileValue(existing?.value).filter((f) => f.url.startsWith("data:") || f.url.startsWith("http"));
+  const next = JSON.stringify([...list, file]);
+  await db.cell.upsert({
+    where: { itemId_columnId: { itemId, columnId } },
+    create: { itemId, columnId, value: next },
+    update: { value: next },
+  });
+}
 
 // Core document generation (no auth) — used by the manual action and by
 // automations. Fills a template from an item's data (resolving status labels,
@@ -93,6 +114,61 @@ export async function generateDocumentCore(
       connCell?.value && sourceColumnId
         ? { text: resolveSource(connCell.value, sourceColumnId) }
         : { text: "" };
+  }
+
+  // ── DocuGen .docx path: fill the uploaded .docx and save to a file column ──
+  if (template.kind === "docx" && template.docxUrl) {
+    let placeholders: string[] = [];
+    let mapping: Record<string, string> = {};
+    try {
+      placeholders = JSON.parse(template.placeholders);
+    } catch {}
+    try {
+      mapping = JSON.parse(template.mapping);
+    } catch {}
+    const textOf = (colName: string): string => {
+      if (!colName) return "";
+      if (colName === "Item" || colName === "{{Item}}") return item.name;
+      const v = values[colName];
+      return v && "text" in v ? v.text ?? "" : "";
+    };
+    // Signature anchors ({{Signature_1}}, {{Signer_Name_1}}, {{Signed_Date_1}},
+    // {{Initial_1}}, {{Date_Signed_1}}) are NOT data — keep them literal so
+    // DocuSign can convert them to signature fields later (section 7).
+    const isSignatureAnchor = (p: string) => /^(signature|signer_name|signed_date|date_signed|initial)_?\d*$/i.test(p);
+    const data: Record<string, string> = {};
+    for (const p of placeholders) {
+      if (isSignatureAnchor(p)) {
+        data[p] = `{{${p}}}`; // echo back so the anchor text survives filling
+        continue;
+      }
+      const mapped = mapping[p];
+      data[p] = mapped ? textOf(mapped) : textOf(p); // else auto-fill same-named column
+    }
+    let outBuf: Buffer;
+    try {
+      const tplBuf = await fetchFileBuffer(template.docxUrl);
+      outBuf = fillDocx(tplBuf, data);
+    } catch (e) {
+      console.error("[docgen:docx]", e);
+      return null;
+    }
+    const fileName = `${safeName(template.name)}-${safeName(item.name)}.docx`;
+    const url = await putFile(`docs/${itemId}/${Date.now()}-${fileName}`, outBuf, DOCX_MIME);
+    const doc = await db.generatedDocument.create({
+      data: {
+        itemId,
+        templateId,
+        name: `${template.name} — ${item.name}`,
+        html: "",
+        content: JSON.stringify({ fileUrl: url, fileName, format: "docx" }),
+      },
+    });
+    const outCol = template.outputColumnId
+      ? item.board.columns.find((c) => c.id === template.outputColumnId && c.type === "file")
+      : item.board.columns.find((c) => c.type === "file");
+    if (outCol) await appendToFileColumn(itemId, outCol.id, { name: fileName, type: DOCX_MIME, url });
+    return doc.id;
   }
 
   const title = `${template.name} — ${item.name}`;

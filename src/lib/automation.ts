@@ -29,7 +29,18 @@ type Action =
   | { type: "send_email"; toColumnId?: string; subject: string; body: string }
   | { type: "create_item_in_board"; boardId: string; connect?: boolean }
   | { type: "set_date"; columnId: string; mode: "specific" | "today" | "offset"; date?: string; offsetDays?: number }
-  | { type: "change_column_value"; columnId: string; value: string };
+  | { type: "change_column_value"; columnId: string; value: string }
+  | {
+      type: "send_docusign";
+      fileColumnId?: string;
+      recipientEmailColumnId?: string;
+      recipientNameColumnId?: string;
+      docusignTemplateId?: string;
+      subject?: string;
+      message?: string;
+      statusColumnId?: string;
+      signedColumnId?: string;
+    };
 
 // A stored action is either a single action or a sequence (multiple THEN steps).
 // Kept backward-compatible: existing single-action rules parse straight to Action.
@@ -317,6 +328,105 @@ async function execute(action: Action, event: AutomationEvent) {
           },
         });
       }
+      break;
+    }
+
+    case "send_docusign": {
+      const it = await db.item.findUnique({
+        where: { id: itemId },
+        include: { cells: { include: { column: true } }, board: { include: { environment: true } } },
+      });
+      if (!it) break;
+      const orgId = it.board.environment.orgId;
+      const { sendEnvelopeFromDocument, sendEnvelopeFromTemplate, getDsAccount } = await import("@/lib/docusign");
+      const account = await getDsAccount(orgId);
+      const note = async (msg: string) =>
+        db.update.create({ data: { itemId, body: `✒ DocuSign: ${msg}`, mentions: "[]" } });
+      if (!account) {
+        await note("skipped — DocuSign not connected.");
+        break;
+      }
+      // Recipient
+      const emailCell = action.recipientEmailColumnId
+        ? it.cells.find((c) => c.columnId === action.recipientEmailColumnId)
+        : it.cells.find((c) => c.column.type === "email");
+      const recipientEmail = (emailCell?.value ?? "").trim();
+      const nameCell = action.recipientNameColumnId
+        ? it.cells.find((c) => c.columnId === action.recipientNameColumnId)
+        : undefined;
+      const recipientName = (nameCell?.value ?? it.name).trim();
+      if (!recipientEmail) {
+        await note("skipped — no recipient email.");
+        break;
+      }
+      const subject = await renderTemplate(itemId, action.subject || `Please sign: ${it.name}`);
+      const message = await renderTemplate(itemId, action.message || "");
+
+      let res: { ok: boolean; envelopeId?: string; error?: string };
+      if (action.docusignTemplateId) {
+        res = await sendEnvelopeFromTemplate(orgId, {
+          templateId: action.docusignTemplateId,
+          recipients: [{ email: recipientEmail, name: recipientName }],
+          subject,
+          message,
+        });
+      } else {
+        // Send a document from a file column (latest file).
+        const fileCell = action.fileColumnId
+          ? it.cells.find((c) => c.columnId === action.fileColumnId)
+          : it.cells.find((c) => c.column.type === "file");
+        const files = parseFileValue(fileCell?.value);
+        const file = files[files.length - 1];
+        if (!file?.url) {
+          await note("skipped — no document found in the file column.");
+          break;
+        }
+        const { fetchFileBuffer } = await import("@/lib/blob-storage");
+        let base64: string;
+        try {
+          base64 = (await fetchFileBuffer(file.url)).toString("base64");
+        } catch {
+          await note("skipped — could not read the document file.");
+          break;
+        }
+        const ext = /\.pdf$/i.test(file.name) ? "pdf" : "docx";
+        res = await sendEnvelopeFromDocument(orgId, {
+          documentBase64: base64,
+          documentName: file.name,
+          fileExtension: ext,
+          recipients: [{ email: recipientEmail, name: recipientName }],
+          subject,
+          message,
+        });
+      }
+      if (!res.ok) {
+        await note(`failed — ${res.error ?? "unknown error"}`);
+        break;
+      }
+      await db.docuSignEnvelope.create({
+        data: {
+          orgId,
+          itemId,
+          boardId: event.boardId,
+          envelopeId: res.envelopeId ?? "",
+          status: "sent",
+          recipientEmail,
+          recipientName,
+          subject,
+          statusColumnId: action.statusColumnId ?? null,
+          signedColumnId: action.signedColumnId ?? null,
+        },
+      });
+      if (action.statusColumnId) {
+        const { syncEnvelope } = await import("@/lib/docusign-sync");
+        // Write the initial "sent" status immediately (best-effort).
+        const created = await db.docuSignEnvelope.findFirst({
+          where: { itemId, envelopeId: res.envelopeId ?? "" },
+          orderBy: { createdAt: "desc" },
+        });
+        if (created) await syncEnvelope(created.id).catch(() => {});
+      }
+      await note(`sent to ${recipientEmail}.`);
       break;
     }
 

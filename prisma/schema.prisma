@@ -31,6 +31,52 @@ model Organization {
   employers    Employer[]
   emails       EmailMessage[]
   connectedEmails ConnectedEmailAccount[]
+  docusign     ConnectedDocuSignAccount?
+  envelopes    DocuSignEnvelope[]
+}
+
+// A DocuSign account connected to an org via OAuth (Authorization Code Grant).
+// One per org. Tokens let us create/send envelopes and read status on its behalf.
+model ConnectedDocuSignAccount {
+  id           String    @id @default(cuid())
+  orgId        String    @unique
+  userId       String    // who connected it
+  accountId    String    // DocuSign API account id
+  accountName  String    @default("")
+  baseUri      String    // e.g. https://demo.docusign.net (account base URI)
+  email        String    @default("")
+  accessToken  String    @default("")
+  refreshToken String    @default("")
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+// One e-signature envelope sent for an item, tracked on the board.
+// status: created | sent | delivered | viewed | signed(completed) | declined | voided | expired
+model DocuSignEnvelope {
+  id             String    @id @default(cuid())
+  orgId          String
+  itemId         String
+  boardId        String    @default("")
+  envelopeId     String    @default("")
+  status         String    @default("created")
+  recipientEmail String    @default("")
+  recipientName  String    @default("")
+  subject        String    @default("")
+  signedFileUrl  String    @default("")
+  statusColumnId String?   // board column to write the status into
+  signedColumnId String?   // file column to upload the signed doc into
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  item Item         @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([itemId])
+  @@index([envelopeId])
 }
 
 // Roles hold a JSON permission set. isSystem roles (Admin/Member/Viewer/Developer)
@@ -240,6 +286,7 @@ model Item {
   documents   GeneratedDocument[]
   employerTags CandidateTag[]
   emails      EmailMessage[]
+  envelopes   DocuSignEnvelope[]
 
   @@index([boardId])
   @@index([groupId])
@@ -294,15 +341,59 @@ model BoardView {
 
 // Document generation (Part 11) — DocuGen-style.
 // body holds text with {{Placeholders}} that map to column names or {{Item}}.
+// DocuGen template (Part: Additional DocuGen features). Two kinds:
+//   kind="text"  → legacy inline body with {{Placeholders}} (kept working)
+//   kind="docx"  → an uploaded .docx filled via docxtemplater; output DOCX/PDF
 model DocTemplate {
   id        String   @id @default(cuid())
   boardId   String
   name      String
-  body      String   @default("")
-  createdAt DateTime @default(now())
+  body      String   @default("")          // legacy text template body
+  kind      String   @default("text")      // "text" | "docx"
 
-  board     Board               @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  // DocuGen metadata
+  reference String   @default("")           // stable ref, e.g. DG-001 (never changes on rename)
+  viewName  String   @default("")           // DocuGen view name/number
+  employer  String   @default("")
+  category  String   @default("")
+  folder    String   @default("")
+
+  // Uploaded .docx (kind="docx")
+  docxUrl      String  @default("")          // blob URL (or data URL fallback)
+  docxName     String  @default("")          // original filename
+  placeholders String  @default("[]")        // JSON: detected placeholder names
+  mapping      String  @default("{}")        // JSON: placeholder -> column NAME / {{Item}}
+
+  // Output
+  outputFormat   String  @default("docx")    // "docx" | "pdf"
+  outputColumnId String?                     // File column to save the generated doc into
+
+  active    Boolean  @default(true)
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  board     Board                @relation(fields: [boardId], references: [id], onDelete: Cascade)
   documents GeneratedDocument[]
+  versions  DocTemplateVersion[]
+
+  @@index([boardId])
+}
+
+// Version history for a DocuGen template (version control + replace/keep).
+model DocTemplateVersion {
+  id         String   @id @default(cuid())
+  templateId String
+  version    Int
+  docxUrl    String   @default("")
+  docxName   String   @default("")
+  mapping    String   @default("{}")
+  note       String   @default("")
+  createdAt  DateTime @default(now())
+
+  template DocTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
 }
 
 // A filled document generated from a template + an item's data.

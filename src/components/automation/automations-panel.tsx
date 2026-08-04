@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { StatusLabel } from "@/lib/constants";
 import {
   createAutomation,
@@ -11,11 +11,17 @@ import {
   renameFolder,
   moveAutomation,
 } from "@/app/actions/automation";
+import { listDocuSignTemplates, type DsTemplateRow } from "@/app/actions/docs";
 
 type Col = { id: string; name: string; type: string; labels: StatusLabel[] };
 type Grp = { id: string; name: string; color: string };
 type Dep = { id: string; name: string };
-type Tpl = { id: string; name: string };
+type Tpl = { id: string; name: string; reference?: string; viewName?: string; employer?: string; active?: boolean };
+
+// Rich label for a DocuGen template: Name – View – Reference – Employer.
+function tplLabel(t: Tpl): string {
+  return [t.name, t.viewName || null, t.reference || null, t.employer || null].filter(Boolean).join(" – ");
+}
 type Auto = {
   id: string;
   name: string;
@@ -247,13 +253,19 @@ function describeAction(a: SafeObj, columns: Col[], groups: Grp[], departments: 
   if (a?.type === "notify") return `notify ${a.target === "department" ? dep(a.targetId) : "person"}`;
   if (a?.type === "assign_round_robin")
     return `assign ${colName(a.columnId)} round-robin from ${dep(a.departmentId)}`;
-  if (a?.type === "generate_document")
-    return `generate “${templates.find((t) => t.id === a.templateId)?.name ?? "document"}”`;
+  if (a?.type === "generate_document") {
+    const t = templates.find((x) => x.id === a.templateId);
+    if (!t) return `generate a document ⚠ (template unavailable)`;
+    if (t.active === false) return `generate “${t.name}” ⚠ (template deactivated)`;
+    return `generate “${t.name}”`;
+  }
   if (a?.type === "request_invoice")
     return `request an invoice to Finance (${a.account === "global" ? "Global" : "PTY"})`;
   if (a?.type === "send_email") return `send an email${a.subject ? ` “${a.subject}”` : ""}`;
   if (a?.type === "create_item_in_board")
     return `create an item in another board${a.connect ? " (connected)" : ""}`;
+  if (a?.type === "send_docusign")
+    return `send for e-signature via DocuSign${a.docusignTemplateId ? " (template)" : ""}`;
   if (a?.type === "set_date")
     return a.mode === "today"
       ? `set ${colName(a.columnId)} to today`
@@ -421,7 +433,8 @@ type ActionType =
   | "request_invoice"
   | "send_email"
   | "create_item_in_board"
-  | "set_date";
+  | "set_date"
+  | "send_docusign";
 
 type ActionDraft = {
   key: string;
@@ -446,6 +459,15 @@ type ActionDraft = {
   dateMode?: "specific" | "today" | "offset";
   dateValue?: string;
   dateOffset?: number;
+  // send_docusign
+  dsFileCol?: string;
+  dsEmailCol?: string;
+  dsNameCol?: string;
+  dsTemplateId?: string;
+  dsSubject?: string;
+  dsMessage?: string;
+  dsStatusCol?: string;
+  dsSignedCol?: string;
 };
 
 let draftSeq = 0;
@@ -480,6 +502,14 @@ function toDraft(
     dateMode: t === "set_date" ? a?.mode ?? "specific" : "specific",
     dateValue: t === "set_date" ? a?.date ?? "" : "",
     dateOffset: t === "set_date" ? a?.offsetDays ?? 7 : 7,
+    dsFileCol: (t === "send_docusign" ? a?.fileColumnId : "") || d.allColumns.find((c) => c.type === "file")?.id || "",
+    dsEmailCol: (t === "send_docusign" ? a?.recipientEmailColumnId : "") || d.emailCols[0]?.id || "",
+    dsNameCol: (t === "send_docusign" ? a?.recipientNameColumnId : "") || "",
+    dsTemplateId: t === "send_docusign" ? a?.docusignTemplateId ?? "" : "",
+    dsSubject: t === "send_docusign" ? a?.subject ?? "" : "",
+    dsMessage: t === "send_docusign" ? a?.message ?? "" : "",
+    dsStatusCol: (t === "send_docusign" ? a?.statusColumnId : "") || "",
+    dsSignedCol: (t === "send_docusign" ? a?.signedColumnId : "") || "",
   };
 }
 
@@ -511,6 +541,18 @@ function buildAction(a: ActionDraft): Record<string, unknown> {
         mode: a.dateMode,
         ...(a.dateMode === "specific" ? { date: a.dateValue } : {}),
         ...(a.dateMode === "offset" ? { offsetDays: Number(a.dateOffset) || 0 } : {}),
+      };
+    case "send_docusign":
+      return {
+        type: "send_docusign",
+        fileColumnId: a.dsFileCol || undefined,
+        recipientEmailColumnId: a.dsEmailCol || undefined,
+        recipientNameColumnId: a.dsNameCol || undefined,
+        docusignTemplateId: a.dsTemplateId || undefined,
+        subject: a.dsSubject ?? "",
+        message: a.dsMessage ?? "",
+        statusColumnId: a.dsStatusCol || undefined,
+        signedColumnId: a.dsSignedCol || undefined,
       };
     default:
       return { type: "move_to_group", groupId: a.groupId };
@@ -857,6 +899,7 @@ function ActionEditor({
         <option value="send_email">Send an email</option>
         <option value="create_item_in_board">Create item in another board</option>
         <option value="set_date">Set a date</option>
+        <option value="send_docusign">Send for e-signature (DocuSign)</option>
       </select>
 
       {a.type === "move_to_group" && (
@@ -954,12 +997,7 @@ function ActionEditor({
       )}
 
       {a.type === "generate_document" && (
-        <select value={a.templateId} onChange={(e) => onPatch({ templateId: e.target.value })} className={`${inp} mt-2`}>
-          {templates.length === 0 && <option value="">No templates — create one via 📄 Docs</option>}
-          {templates.map((t) => (
-            <option key={t.id} value={t.id}>{t.name}</option>
-          ))}
-        </select>
+        <DocuGenPicker a={a} onPatch={onPatch} templates={templates} />
       )}
 
       {a.type === "request_invoice" && (
@@ -1088,7 +1126,142 @@ function ActionEditor({
           )}
         </div>
       )}
+
+      {a.type === "send_docusign" && (
+        <div className="mt-2 grid gap-2">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-body">Recipient email (column)</label>
+            <select value={a.dsEmailCol} onChange={(e) => onPatch({ dsEmailCol: e.target.value })} className={inp}>
+              <option value="">First email column</option>
+              {allColumns.map((c) => (<option key={c.id} value={c.id}>{c.name}{c.type === "email" ? "" : ` (${c.type})`}</option>))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-body">Recipient name (column)</label>
+            <select value={a.dsNameCol} onChange={(e) => onPatch({ dsNameCol: e.target.value })} className={inp}>
+              <option value="">Item name</option>
+              {allColumns.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-body">DocuSign template (optional)</label>
+            <DsTemplatePicker value={a.dsTemplateId ?? ""} onChange={(v) => onPatch({ dsTemplateId: v })} />
+            <p className="mt-1 text-[10px] text-muted">Leave blank to send the document from the file column below (with auto {"{{Signature_N}}"} fields).</p>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-body">Document to send (file column)</label>
+            <select value={a.dsFileCol} onChange={(e) => onPatch({ dsFileCol: e.target.value })} className={inp} disabled={!!a.dsTemplateId}>
+              <option value="">First file column (latest file)</option>
+              {allColumns.filter((c) => c.type === "file").map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+            </select>
+          </div>
+          <input value={a.dsSubject ?? ""} onChange={(e) => onPatch({ dsSubject: e.target.value })} placeholder="Email subject — e.g. Please sign: {{Item}}" className={inp} />
+          <textarea value={a.dsMessage ?? ""} onChange={(e) => onPatch({ dsMessage: e.target.value })} rows={2} placeholder="Message to the signer (optional)" className={`${inp} resize-y`} />
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-body">Write status to (column)</label>
+              <select value={a.dsStatusCol} onChange={(e) => onPatch({ dsStatusCol: e.target.value })} className={inp}>
+                <option value="">— none —</option>
+                {allColumns.filter((c) => c.type === "status" || c.type === "text").map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-body">Signed file → (file column)</label>
+              <select value={a.dsSignedCol} onChange={(e) => onPatch({ dsSignedCol: e.target.value })} className={inp}>
+                <option value="">— none —</option>
+                {allColumns.filter((c) => c.type === "file").map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
     </>
+  );
+}
+
+// Searchable DocuSign template picker — lazy-loads templates from the connected
+// account (empty until DocuSign is connected).
+function DsTemplatePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [templates, setTemplates] = useState<DsTemplateRow[] | null>(null);
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    listDocuSignTemplates().then(setTemplates).catch(() => setTemplates([]));
+  }, []);
+  if (templates === null) return <p className="text-xs text-muted">Loading DocuSign templates…</p>;
+  if (templates.length === 0)
+    return (
+      <select value="" disabled className={inp}>
+        <option value="">No DocuSign templates (connect DocuSign in Settings)</option>
+      </select>
+    );
+  const s = q.toLowerCase();
+  const shown = templates.filter((t) => !s || t.name.toLowerCase().includes(s) || t.templateId.toLowerCase().includes(s));
+  return (
+    <div className="grid gap-1.5">
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search DocuSign templates…" className={inp} />
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={inp}>
+        <option value="">— none (send document instead) —</option>
+        {value && !templates.some((t) => t.templateId === value) && (
+          <option value={value}>⚠ Unavailable template (id kept)</option>
+        )}
+        {shown.map((t) => (<option key={t.templateId} value={t.templateId}>{t.name} — {t.templateId.slice(0, 8)}</option>))}
+      </select>
+    </div>
+  );
+}
+
+// Searchable DocuGen template picker (A2): shows Name – View – Ref – Employer,
+// only offers ACTIVE templates for new selection, and keeps a now-unavailable
+// stored template visible with a warning so the automation still shows its intent.
+function DocuGenPicker({
+  a,
+  onPatch,
+  templates,
+}: {
+  a: ActionDraft;
+  onPatch: (patch: Partial<ActionDraft>) => void;
+  templates: Tpl[];
+}) {
+  const [q, setQ] = useState("");
+  const active = templates.filter((t) => t.active !== false);
+  const current = templates.find((t) => t.id === a.templateId);
+  const unavailable = !!a.templateId && !current;
+  const deactivated = !!current && current.active === false;
+  const s = q.toLowerCase();
+  const shown = active.filter((t) => !s || tplLabel(t).toLowerCase().includes(s));
+
+  return (
+    <div className="mt-2 grid gap-1.5">
+      {templates.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-hair px-3 py-2 text-xs text-muted">
+          No templates yet — upload one via 🗂 DocuGen on the board.
+        </p>
+      ) : (
+        <>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search templates by name / view / ref / employer…"
+            className={inp}
+          />
+          <select value={a.templateId ?? ""} onChange={(e) => onPatch({ templateId: e.target.value })} className={inp}>
+            <option value="">Select a template…</option>
+            {/* Keep a deactivated/deleted stored template visible + flagged. */}
+            {deactivated && current && <option value={current.id}>{tplLabel(current)} (deactivated)</option>}
+            {unavailable && <option value={a.templateId}>⚠ Unavailable template (id kept)</option>}
+            {shown.map((t) => (
+              <option key={t.id} value={t.id}>{tplLabel(t)}</option>
+            ))}
+          </select>
+          {unavailable && (
+            <p className="text-[11px] text-danger">⚠ The selected template was deleted. Pick another before this runs.</p>
+          )}
+          {deactivated && (
+            <p className="text-[11px] text-amber">⚠ This template is deactivated and won&rsquo;t generate until reactivated.</p>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

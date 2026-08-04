@@ -11,6 +11,7 @@ import { CalendarView } from "./calendar-view";
 import { AddColumnButton } from "./add-column";
 import { FormButton } from "./form-button";
 import { DocsButton, type TemplateLite } from "./docs-button";
+import { DocuGenButton } from "./docugen-manager";
 import { ImportExportButton } from "./data-io";
 import { BoardUIProvider } from "./board-ui";
 import {
@@ -373,6 +374,7 @@ export function BoardView({
             </div>
             <div className="flex items-center gap-2">
               {!readOnly && <DocsButton boardId={board.id} templates={templates} columns={board.columns} />}
+              {!readOnly && <DocuGenButton boardId={board.id} />}
               {!readOnly && <FormButton boardId={board.id} forms={board.forms} columns={board.columns} groups={board.groups.map((g) => ({ id: g.id, name: g.name }))} openSignal={formsSignal} />}
               <ImportExportButton board={board} />
               {!readOnly && (
