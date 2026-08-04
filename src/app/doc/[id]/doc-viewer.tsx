@@ -1,9 +1,8 @@
 "use client";
 
 import { useRef } from "react";
-import Link from "next/link";
 
-export function DocViewer({ id, name, html }: { id: string; name: string; html: string }) {
+export function DocViewer({ id, name, html, isDocx = false }: { id: string; name: string; html: string; isDocx?: boolean }) {
   const frame = useRef<HTMLIFrameElement>(null);
 
   function print() {
@@ -22,37 +21,65 @@ export function DocViewer({ id, name, html }: { id: string; name: string; html: 
           <h1 className="truncate text-base font-bold text-ink">{name}</h1>
         </div>
         <div className="flex items-center gap-2">
-          <a
-            href={`/doc/${id}/download?format=pdf`}
-            className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep"
-          >
-            ⬇ Download PDF
-          </a>
-          <a
-            href={`/doc/${id}/download?format=docx`}
-            className="rounded-lg border border-hair px-3 py-1.5 text-sm font-medium text-body hover:bg-canvas"
-          >
-            ⬇ Download Word
-          </a>
-          <button
-            onClick={print}
-            className="rounded-lg border border-hair px-3 py-1.5 text-sm font-medium text-body hover:bg-canvas"
-          >
-            🖨 Print
-          </button>
+          {isDocx ? (
+            <a
+              href={`/doc/${id}/download?format=docx`}
+              className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep"
+            >
+              ⬇ Download .docx
+            </a>
+          ) : (
+            <>
+              <a
+                href={`/doc/${id}/download?format=pdf`}
+                className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep"
+              >
+                ⬇ Download PDF
+              </a>
+              <a
+                href={`/doc/${id}/download?format=docx`}
+                className="rounded-lg border border-hair px-3 py-1.5 text-sm font-medium text-body hover:bg-canvas"
+              >
+                ⬇ Download Word
+              </a>
+              <button
+                onClick={print}
+                className="rounded-lg border border-hair px-3 py-1.5 text-sm font-medium text-body hover:bg-canvas"
+              >
+                🖨 Print
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {/* paper */}
       <div className="flex-1 overflow-auto p-4 sm:p-8">
-        <div className="mx-auto max-w-3xl rounded-xl border border-hair bg-white shadow-soft">
-          <iframe
-            ref={frame}
-            title={name}
-            srcDoc={printableHtml(html)}
-            className="h-[75vh] w-full rounded-xl"
-          />
-        </div>
+        {isDocx ? (
+          <div className="mx-auto max-w-xl rounded-xl border border-hair bg-white p-10 text-center shadow-soft">
+            <p className="text-4xl">📄</p>
+            <h2 className="mt-3 text-base font-bold text-ink">{name}</h2>
+            <p className="mt-1 text-sm text-muted">
+              This is a Word (.docx) document generated from a DocuGen template. Browsers can&rsquo;t
+              preview .docx inline — download it to view or edit.
+            </p>
+            <a
+              href={`/doc/${id}/download?format=docx`}
+              className="mt-4 inline-block rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep"
+            >
+              ⬇ Download .docx
+            </a>
+          </div>
+        ) : (
+          <div className="mx-auto max-w-3xl rounded-xl border border-hair bg-white shadow-soft">
+            <iframe
+              ref={frame}
+              title={name}
+              srcDoc={printableHtml(html)}
+              className="h-[75vh] w-full rounded-xl"
+            />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -279,6 +279,11 @@ function TemplateEditor({
   const replaceRef = useRef<HTMLInputElement>(null);
   const [replacing, setReplacing] = useState(false);
 
+  // Signature anchors ({{Signature_1}} etc.) are handled by DocuSign, not mapped.
+  const isSignatureAnchor = (p: string) => /^(signature|signer_name|signed_date|date_signed|initial)_?\d*$/i.test(p);
+  const signaturePlaceholders = template.placeholders.filter(isSignatureAnchor);
+  const dataPlaceholders = template.placeholders.filter((p) => !isSignatureAnchor(p));
+
   async function save() {
     setSaving(true);
     await saveTemplateMeta(boardId, template.id, {
@@ -295,6 +300,17 @@ function TemplateEditor({
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    // Warn before replacing a template that automations depend on — every
+    // automation using it will send the new version on its next run.
+    if (
+      template.usageCount > 0 &&
+      !confirm(
+        `"${template.name}" is used by ${template.usageCount} automation${template.usageCount === 1 ? "" : "s"}. ` +
+          `Replacing the file means those automations will use the NEW version from now on ` +
+          `(the previous version is kept in version history). Continue?`
+      )
+    )
+      return;
     setReplacing(true);
     const r = new FileReader();
     const dataUrl: string = await new Promise((res, rej) => { r.onload = () => res(String(r.result)); r.onerror = () => rej(r.error); r.readAsDataURL(file); });
@@ -344,23 +360,45 @@ function TemplateEditor({
             No {"{{placeholders}}"} found in this .docx. Add some (e.g. {"{{Candidate_Name}}"}) and use ⟳ Replace.
           </p>
         ) : (
-          <div className="grid gap-1.5">
-            {template.placeholders.map((p) => (
-              <div key={p} className="flex items-center gap-2">
-                <code className="w-1/2 truncate rounded bg-canvas px-2 py-1.5 font-mono text-[11px] text-teal-deep" title={p}>{"{{"}{p}{"}}"}</code>
-                <span className="text-muted">→</span>
-                <select
-                  value={mapping[p] ?? ""}
-                  onChange={(e) => setMapping((m) => ({ ...m, [p]: e.target.value }))}
-                  className={`${inp} w-1/2`}
-                >
-                  <option value="">(unmapped — blank)</option>
-                  <option value="Item">Item name</option>
-                  {columns.map((c) => (<option key={c.id} value={c.name}>{c.name}</option>))}
-                </select>
+          <>
+            <div className="grid gap-1.5">
+              {dataPlaceholders.map((p) => (
+                <div key={p} className="flex items-center gap-2">
+                  <code className="w-1/2 truncate rounded bg-canvas px-2 py-1.5 font-mono text-[11px] text-teal-deep" title={p}>{"{{"}{p}{"}}"}</code>
+                  <span className="text-muted">→</span>
+                  <select
+                    value={mapping[p] ?? ""}
+                    onChange={(e) => setMapping((m) => ({ ...m, [p]: e.target.value }))}
+                    className={`${inp} w-1/2`}
+                  >
+                    <option value="">(unmapped — blank)</option>
+                    <option value="Item">Item name</option>
+                    {columns.map((c) => (<option key={c.id} value={c.name}>{c.name}</option>))}
+                  </select>
+                </div>
+              ))}
+              {dataPlaceholders.length === 0 && (
+                <p className="text-xs text-muted">No data placeholders — only signature fields below.</p>
+              )}
+            </div>
+
+            {signaturePlaceholders.length > 0 && (
+              <div className="mt-3 rounded-lg border border-teal/30 bg-teal/5 p-2.5">
+                <p className="mb-1 text-[11px] font-semibold text-teal-deep">
+                  ✍ Signature fields ({signaturePlaceholders.length}) — auto-placed in DocuSign
+                </p>
+                <p className="mb-1.5 text-[10px] text-muted">
+                  These are <b>not</b> data fields. They&rsquo;re kept in the document as-is and turned into
+                  DocuSign signature/date/name/initial fields automatically when sent (the number = the signer).
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {signaturePlaceholders.map((p) => (
+                    <code key={p} className="rounded bg-white px-2 py-0.5 font-mono text-[11px] text-teal-deep">{"{{"}{p}{"}}"}</code>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
 

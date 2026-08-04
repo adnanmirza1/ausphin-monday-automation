@@ -21,9 +21,34 @@ export async function GET(
 
   const format = new URL(request.url).searchParams.get("format") ?? "pdf";
   const filename = (doc.name.replace(/[^\w\- ]+/g, "").trim() || "document");
+
+  // DocuGen .docx documents store { fileUrl, fileName, format } — stream the
+  // actual generated file rather than trying to render text blocks.
+  let fileMeta: { fileUrl?: string; fileName?: string; format?: string } | null = null;
+  try {
+    const parsed = JSON.parse(doc.content);
+    if (parsed && !Array.isArray(parsed) && typeof parsed.fileUrl === "string") fileMeta = parsed;
+  } catch {}
+  if (fileMeta?.fileUrl) {
+    const { fetchFileBuffer } = await import("@/lib/blob-storage");
+    try {
+      const buf = await fetchFileBuffer(fileMeta.fileUrl);
+      const name = fileMeta.fileName || `${filename}.docx`;
+      return new Response(new Uint8Array(buf), {
+        headers: {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "Content-Disposition": `attachment; filename="${name.replace(/"/g, "")}"`,
+        },
+      });
+    } catch {
+      return new Response("Generated file could not be retrieved.", { status: 502 });
+    }
+  }
+
   let blocks: DocBlock[] = [];
   try {
-    blocks = JSON.parse(doc.content);
+    const parsed = JSON.parse(doc.content);
+    if (Array.isArray(parsed)) blocks = parsed;
   } catch {}
 
   if (format === "docx") {

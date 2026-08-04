@@ -43,17 +43,6 @@ export default async function SettingsPage() {
       envVars: ["STRIPE_SECRET_KEY_GLOBAL"],
     },
     {
-      name: "DocuSign (E-signature)",
-      enables: "Send generated documents to candidates for external e-signature",
-      configured: !!(
-        env.DOCUSIGN_INTEGRATION_KEY &&
-        env.DOCUSIGN_ACCOUNT_ID &&
-        env.DOCUSIGN_SECRET
-      ),
-      envVars: ["DOCUSIGN_INTEGRATION_KEY", "DOCUSIGN_ACCOUNT_ID", "DOCUSIGN_SECRET", "DOCUSIGN_BASE_URL"],
-      note: "In-app signature pad works today; this adds external send-for-signature.",
-    },
-    {
       name: "Email (SMTP)",
       enables: "Outbound email — invoices, notifications",
       configured: !!(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS),

@@ -402,3 +402,23 @@ export async function refreshEnvelopes(boardId: string, itemId: string): Promise
   for (const e of envs) await syncEnvelope(e.id);
   revalidatePath(`/boards/${boardId}`);
 }
+
+export type EnvelopeRow = {
+  id: string;
+  status: string;
+  recipientEmail: string;
+  recipientName: string;
+  subject: string;
+  signedFileUrl: string;
+  createdAt: string;
+};
+// E-signature envelopes tracked for an item (for the item drawer).
+export async function getItemEnvelopes(itemId: string): Promise<EnvelopeRow[]> {
+  const user = await requireUser();
+  const rows = await db.docuSignEnvelope.findMany({
+    where: { itemId, orgId: user.orgId },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, status: true, recipientEmail: true, recipientName: true, subject: true, signedFileUrl: true, createdAt: true },
+  });
+  return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+}

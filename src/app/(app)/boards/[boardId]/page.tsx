@@ -76,7 +76,7 @@ export default async function BoardPage({
       select: { id: true, name: true },
     }),
     db.docTemplate.findMany({
-      where: { boardId: board.id },
+      where: { boardId: board.id, active: true },
       orderBy: { createdAt: "asc" },
       select: { id: true, name: true, body: true },
     }),

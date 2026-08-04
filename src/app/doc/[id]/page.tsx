@@ -20,5 +20,12 @@ export default async function DocPage({
   });
   if (!doc || doc.item.board.environment.orgId !== user.orgId) notFound();
 
-  return <DocViewer id={doc.id} name={doc.name} html={doc.html} />;
+  // DocuGen .docx docs have no HTML body — they're a downloadable file.
+  let isDocx = false;
+  try {
+    const meta = JSON.parse(doc.content);
+    isDocx = !!(meta && !Array.isArray(meta) && meta.fileUrl);
+  } catch {}
+
+  return <DocViewer id={doc.id} name={doc.name} html={doc.html} isDocx={isDocx} />;
 }

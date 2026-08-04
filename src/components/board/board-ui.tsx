@@ -16,7 +16,10 @@ import {
   getItemDocs,
   generateDocument,
   sendDocForSignature,
+  getItemEnvelopes,
+  refreshEnvelopes,
   type DocRow,
+  type EnvelopeRow,
 } from "@/app/actions/docs";
 import { requestInvoiceForItem } from "@/app/actions/finance";
 import {
@@ -29,6 +32,18 @@ import { getItemInbox, logItemEmail, type EmailRow } from "@/app/actions/email";
 import { renameItem } from "@/app/actions/board";
 import { EmailComposer } from "@/components/board/email-composer";
 import { TAG_STAGES, TAG_STAGE_META, type TagStage } from "@/lib/constants";
+
+// Badge colours for DocuSign envelope statuses.
+const SIGN_STATUS_COLOR: Record<string, string> = {
+  draft: "bg-muted",
+  sent: "bg-teal",
+  delivered: "bg-teal-deep",
+  viewed: "bg-amber",
+  signed: "bg-grass",
+  declined: "bg-danger",
+  voided: "bg-muted",
+  expired: "bg-muted",
+};
 import type { TemplateLite } from "./docs-button";
 
 type Dept = { id: string; name: string };
@@ -116,6 +131,8 @@ function ItemPanel({
   const [signMsg, setSignMsg] = useState<string | null>(null);
   const [emails, setEmails] = useState<EmailRow[] | null>(null);
   const [emailTo, setEmailTo] = useState("");
+  const [envelopes, setEnvelopes] = useState<EnvelopeRow[] | null>(null);
+  const [refreshingSign, setRefreshingSign] = useState(false);
   // Editable item name in the drawer (Improvement A2).
   const [itemName, setItemName] = useState(item.name);
   const [composing, setComposing] = useState(false);
@@ -145,6 +162,7 @@ function ItemPanel({
     // the effect only needs to (re)load this item's data.
     getItemUpdates(item.id).then(setUpdates);
     getItemDocs(item.id).then(setDocs);
+    getItemEnvelopes(item.id).then(setEnvelopes).catch(() => setEnvelopes([]));
     getItemTags(item.id).then(setTags);
     getItemInbox(item.id).then((r) => {
       setEmails(r.emails);
@@ -360,6 +378,7 @@ function ItemPanel({
                           start(async () => {
                             const msg = await sendDocForSignature(d.id);
                             setSignMsg(msg);
+                            setEnvelopes(await getItemEnvelopes(item.id));
                             setTimeout(() => setSignMsg(null), 4000);
                           })
                         }
@@ -375,6 +394,44 @@ function ItemPanel({
               </div>
             )}
           </div>
+
+          {/* e-signature status (DocuSign) */}
+          {envelopes && envelopes.length > 0 && (
+            <div className="mb-5">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-sm font-bold text-ink">E-signature</h3>
+                <button
+                  onClick={() =>
+                    start(async () => {
+                      setRefreshingSign(true);
+                      await refreshEnvelopes(boardId, item.id);
+                      setEnvelopes(await getItemEnvelopes(item.id));
+                      setRefreshingSign(false);
+                    })
+                  }
+                  disabled={refreshingSign}
+                  className="rounded-lg border border-hair px-2.5 py-1 text-xs font-medium text-body hover:bg-canvas disabled:opacity-60"
+                >
+                  {refreshingSign ? "Refreshing…" : "↻ Refresh status"}
+                </button>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {envelopes.map((e) => (
+                  <div key={e.id} className="flex items-center gap-2 rounded-lg border border-hair px-3 py-2 text-xs">
+                    <span className="flex-1 truncate text-body" title={e.subject}>
+                      ✍ {e.subject || "Agreement"} → {e.recipientEmail}
+                    </span>
+                    {e.signedFileUrl && (
+                      <a href={e.signedFileUrl} target="_blank" rel="noreferrer" className="flex-none text-teal hover:underline">signed ↗</a>
+                    )}
+                    <span className={`flex-none rounded-full px-2 py-0.5 text-[10px] font-semibold text-white ${SIGN_STATUS_COLOR[e.status] ?? "bg-muted"}`}>
+                      {e.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="mb-3 border-t border-hair" />
 
