@@ -292,8 +292,8 @@ function TemplateEditor({
     });
     await onSaved();
     setSaving(false);
-    setMsg("Saved.");
-    setTimeout(() => setMsg(null), 1500);
+    setMsg("✓ Template saved successfully.");
+    setTimeout(() => setMsg(null), 3000);
   }
 
   async function onReplace(e: React.ChangeEvent<HTMLInputElement>) {
@@ -323,6 +323,13 @@ function TemplateEditor({
   return (
     <div className="mt-3 flex-1 overflow-auto scroll-thin">
       <button onClick={onBack} className="mb-3 text-sm text-teal hover:underline">← All templates</button>
+
+      {/* Prominent save/replace confirmation banner */}
+      {msg && (
+        <div className={`mb-3 rounded-lg px-3 py-2 text-sm font-medium ${/fail|error|could not|invalid/i.test(msg) ? "bg-danger/10 text-danger" : "bg-grass/10 text-grass"}`}>
+          {msg}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="Template name"><input value={name} onChange={(e) => setName(e.target.value)} className={inp} /></Field>
@@ -409,7 +416,6 @@ function TemplateEditor({
       )}
 
       <div className="mt-4 flex items-center justify-end gap-2">
-        {msg && <span className="mr-auto text-xs text-grass">{msg}</span>}
         <button onClick={onBack} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">Back</button>
         <button onClick={save} disabled={saving || !name.trim()} className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50">
           {saving ? "Saving…" : "Save template"}
