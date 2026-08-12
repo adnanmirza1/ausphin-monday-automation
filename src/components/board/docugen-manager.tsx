@@ -9,9 +9,11 @@ import {
   duplicateTemplate,
   deleteTemplate,
   setTemplatesActive,
+  getPlaceholderList,
   type DocuGenData,
   type DocuGenTemplate,
 } from "@/app/actions/docs";
+import type { PlaceholderRow } from "@/lib/placeholders";
 
 function readDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -22,7 +24,13 @@ function readDataUrl(file: File): Promise<string> {
   });
 }
 
-export function DocuGenButton({ boardId }: { boardId: string }) {
+export function DocuGenButton({
+  boardId,
+  itemColumnName = "Item",
+}: {
+  boardId: string;
+  itemColumnName?: string;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -33,12 +41,21 @@ export function DocuGenButton({ boardId }: { boardId: string }) {
       >
         🗂 DocuGen
       </button>
-      {open && <DocuGenModal boardId={boardId} onClose={() => setOpen(false)} />}
+      {open && <DocuGenModal boardId={boardId} itemColumnName={itemColumnName} onClose={() => setOpen(false)} />}
     </>
   );
 }
 
-function DocuGenModal({ boardId, onClose }: { boardId: string; onClose: () => void }) {
+function DocuGenModal({
+  boardId,
+  itemColumnName,
+  onClose,
+}: {
+  boardId: string;
+  itemColumnName: string;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"templates" | "config">("templates");
   const [data, setData] = useState<DocuGenData | null>(null);
   const [q, setQ] = useState("");
   const [folder, setFolder] = useState("");
@@ -134,17 +151,30 @@ function DocuGenModal({ boardId, onClose }: { boardId: string; onClose: () => vo
       <div className="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-bold text-ink">🗂 DocuGen Templates</h2>
+            <h2 className="text-lg font-bold text-ink">🗂 DocuGen</h2>
             <p className="text-sm text-muted">
-              Upload .docx templates with {"{{Placeholders}}"} — mapped to board columns, generated per item.
+              Templates, placeholders, and DOCX configuration — all in one place.
             </p>
           </div>
           <button onClick={onClose} className="text-muted hover:text-ink">✕</button>
         </div>
 
-        {editing ? (
+        {/* Configuration entry points consolidated into one modal (Improvement 1) */}
+        <div className="mt-3 flex gap-1 border-b border-hair">
+          <TabButton active={tab === "templates"} onClick={() => setTab("templates")}>
+            Templates
+          </TabButton>
+          <TabButton active={tab === "config"} onClick={() => setTab("config")}>
+            Configuration
+          </TabButton>
+        </div>
+
+        {tab === "config" ? (
+          <PlaceholderConfigTab boardId={boardId} itemColumnName={itemColumnName} />
+        ) : editing ? (
           <TemplateEditor
             boardId={boardId}
+            itemColumnName={itemColumnName}
             template={editing}
             columns={data?.columns ?? []}
             fileColumns={data?.fileColumns ?? []}
@@ -250,8 +280,120 @@ function DocuGenModal({ boardId, onClose }: { boardId: string; onClose: () => vo
   );
 }
 
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`-mb-px border-b-2 px-3 py-2 text-sm font-semibold transition ${
+        active ? "border-teal text-teal-deep" : "border-transparent text-muted hover:text-body"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// DocuGen → Configuration tab (Improvement 1 + 2): the dedicated settings
+// area the client asked for — a single place to see every board column's
+// generated placeholder and copy it straight into a .docx template, instead
+// of hunting through the template editor's mapping dropdowns.
+function PlaceholderConfigTab({ boardId, itemColumnName }: { boardId: string; itemColumnName: string }) {
+  const [rows, setRows] = useState<PlaceholderRow[] | null>(null);
+  const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+
+  useEffect(() => {
+    getPlaceholderList(boardId).then(setRows);
+  }, [boardId]);
+
+  async function copy(placeholder: string, slug: string) {
+    try {
+      await navigator.clipboard.writeText(placeholder);
+      setCopiedSlug(slug);
+      setTimeout(() => setCopiedSlug((s) => (s === slug ? null : s)), 1800);
+    } catch {
+      // Clipboard API unavailable (older browser/insecure context) — the
+      // placeholder is still visible to copy manually.
+    }
+  }
+
+  const filtered = (rows ?? []).filter(
+    (r) => !q.trim() || r.columnName.toLowerCase().includes(q.trim().toLowerCase()) || r.placeholder.includes(q.trim().toLowerCase())
+  );
+
+  return (
+    <div className="mt-3 flex-1 overflow-auto scroll-thin">
+      <div className="rounded-lg border border-hair bg-canvas/40 p-3 text-xs text-body">
+        <p className="font-semibold text-ink">How to use placeholders</p>
+        <p className="mt-1">
+          In your Word (.docx) template, type the placeholder exactly as shown (including the double
+          curly braces) anywhere you want that column&rsquo;s value to appear — e.g.{" "}
+          <code className="rounded bg-white px-1 py-0.5 font-mono text-teal-deep">{"{{first_name}}"}</code>.
+          Upload the file under the <b>Templates</b> tab and DocuGen fills it in automatically when a
+          document is generated for an item — no manual mapping needed, though you can still remap any
+          placeholder from the template&rsquo;s editor if you&rsquo;d prefer a different column.
+        </p>
+      </div>
+
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search columns or placeholders…"
+        className="mt-3 w-full rounded-lg border border-hair px-3 py-1.5 text-sm outline-none focus:border-teal"
+      />
+
+      <div className="mt-3 overflow-hidden rounded-lg border border-hair">
+        <div className="grid grid-cols-[1fr_1fr_auto] gap-2 border-b border-hair bg-canvas/60 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+          <span>Board column</span>
+          <span>Placeholder</span>
+          <span className="text-right">Copy</span>
+        </div>
+        {rows === null ? (
+          <p className="px-3 py-6 text-center text-sm text-muted">Loading…</p>
+        ) : filtered.length === 0 ? (
+          <p className="px-3 py-6 text-center text-sm text-muted">
+            {q ? "No columns match your search." : "This board has no columns yet."}
+          </p>
+        ) : (
+          filtered.map((r) => (
+            <div
+              key={r.slug}
+              className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 border-b border-hair px-3 py-2 text-sm last:border-b-0"
+            >
+              <span className="truncate text-ink" title={r.columnName}>
+                {r.columnType === "name" ? `${itemColumnName} name` : r.columnName}
+                {r.columnType !== "name" && (
+                  <span className="ml-1.5 text-[10px] font-medium uppercase text-muted">{r.columnType}</span>
+                )}
+              </span>
+              <code className="truncate rounded bg-canvas px-2 py-1 font-mono text-[11px] text-teal-deep" title={r.placeholder}>
+                {r.placeholder}
+              </code>
+              <button
+                onClick={() => copy(r.placeholder, r.slug)}
+                className="justify-self-end rounded-lg border border-hair px-2.5 py-1 text-xs font-medium text-body hover:border-teal hover:text-teal"
+              >
+                {copiedSlug === r.slug ? "✓ Copied" : "Copy"}
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TemplateEditor({
   boardId,
+  itemColumnName,
   template,
   columns,
   fileColumns,
@@ -259,6 +401,7 @@ function TemplateEditor({
   onSaved,
 }: {
   boardId: string;
+  itemColumnName: string;
   template: DocuGenTemplate;
   columns: { id: string; name: string; type: string }[];
   fileColumns: { id: string; name: string }[];
@@ -379,7 +522,7 @@ function TemplateEditor({
                     className={`${inp} w-1/2`}
                   >
                     <option value="">(unmapped — blank)</option>
-                    <option value="Item">Item name</option>
+                    <option value="Item">{itemColumnName} name</option>
                     {columns.map((c) => (<option key={c.id} value={c.name}>{c.name}</option>))}
                   </select>
                 </div>

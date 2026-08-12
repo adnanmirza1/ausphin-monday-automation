@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { requireEditor } from "@/lib/guard";
 import { runAutomations } from "@/lib/automation";
 import { sendMail, mailerConfigured } from "@/lib/mailer";
+import { resolveOrCreateItem } from "@/lib/subitems";
 
 // ── Save form config (board editors) ─────────────────────────
 export async function saveFormConfig(
@@ -214,31 +215,35 @@ async function runSubmission(boardId: string, cfg: FormCfg, formData: FormData):
     const group =
       board.groups.find((g) => g.id === cfg.groupId) ?? board.groups[0];
     if (!group) return { ok: false, error: "This board has no group to receive submissions." };
-    const count = await db.item.count({ where: { groupId: group.id } });
-    const item = await db.item.create({
-      data: { boardId, groupId: group.id, name, position: count },
-    });
-    for (const v of values) {
-      if (v.value !== null)
-        await db.cell.create({ data: { itemId: item.id, columnId: v.columnId, value: v.value } });
-    }
+    // Feature 1: when the submission's email matches an existing main item on
+    // this board, group it as a subitem instead of creating a duplicate
+    // person. The explicit dedupeColumnId path above already handles its own
+    // (possibly non-email) column and takes precedence when configured.
+    const result = await resolveOrCreateItem(
+      boardId,
+      group.id,
+      name,
+      values.filter((v): v is { columnId: string; value: string } => v.value !== null)
+    );
     // Team notification (NotWorking #1): record the submission on the item so the
     // team sees a new-submission entry in the activity/updates timeline.
     await db.update.create({
       data: {
-        itemId: item.id,
-        body: `📥 New form submission received — ${name}.`,
+        itemId: result.id,
+        body: result.createdAsSubitem
+          ? `📥 New form submission received — ${name} (added as a subitem — email matched an existing record).`
+          : `📥 New form submission received — ${name}.`,
         mentions: "[]",
       },
     });
     // Automations must never block the submitter's confirmation — if a rule
     // errors, log it and still return success.
     try {
-      await runAutomations({ type: "item_created", boardId, itemId: item.id });
+      await runAutomations({ type: "item_created", boardId, itemId: result.id });
     } catch (e) {
       console.error("[form:automation-error]", e);
     }
-    finalItemId = item.id;
+    finalItemId = result.id;
     message = cfg.welcomeMessage?.trim() || "Thanks! Your submission was received.";
   }
 

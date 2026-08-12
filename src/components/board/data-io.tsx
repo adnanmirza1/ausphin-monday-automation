@@ -71,7 +71,7 @@ export function ImportExportButton({ board }: { board: BoardData }) {
 
   function exportCsv() {
     setMenu(false);
-    const headers = ["Name", ...board.columns.map((c) => c.name)];
+    const headers = [board.itemColumnName || "Name", ...board.columns.map((c) => c.name)];
     const lines = [headers.map(csvEscape).join(",")];
     for (const g of board.groups) {
       for (const it of g.items) {
@@ -89,7 +89,7 @@ export function ImportExportButton({ board }: { board: BoardData }) {
   // the full board is captured. Opens in Excel and Google Sheets.
   function exportExcel() {
     setMenu(false);
-    const headers = ["Group", "Name", ...board.columns.map((c) => c.name)];
+    const headers = ["Group", board.itemColumnName || "Name", ...board.columns.map((c) => c.name)];
     const head = `<tr>${headers.map((h) => `<th>${htmlEscape(h)}</th>`).join("")}</tr>`;
     const body: string[] = [];
     for (const g of board.groups) {
@@ -165,7 +165,7 @@ function ImportModal({ board, onClose }: { board: BoardData; onClose: () => void
   const [header, setHeader] = useState<string[]>([]);
   const [mapping, setMapping] = useState<string[]>([]);
   const [groupId, setGroupId] = useState(board.groups[0]?.id ?? "");
-  const [done, setDone] = useState<number | null>(null);
+  const [done, setDone] = useState<{ created: number; createdAsSubitems: number } | null>(null);
   const [, start] = useTransition();
 
   // Common ingest: take a matrix of rows, set header + rows + auto-mapping.
@@ -214,8 +214,8 @@ function ImportModal({ board, onClose }: { board: BoardData; onClose: () => void
   function runImport() {
     if (!rows) return;
     start(async () => {
-      const n = await importItems(board.id, groupId, header, rows, mapping);
-      setDone(n);
+      const result = await importItems(board.id, groupId, header, rows, mapping);
+      setDone(result);
     });
   }
 
@@ -231,7 +231,15 @@ function ImportModal({ board, onClose }: { board: BoardData; onClose: () => void
         <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4 scroll-thin">
           {done !== null ? (
             <p className="py-8 text-center text-sm text-body">
-              ✅ Imported <b>{done}</b> row{done === 1 ? "" : "s"} into the board.
+              ✅ Imported <b>{done.created}</b> row{done.created === 1 ? "" : "s"} into the board.
+              {done.createdAsSubitems > 0 && (
+                <>
+                  {" "}
+                  <b>{done.createdAsSubitems}</b> matched an existing item by email and{" "}
+                  {done.createdAsSubitems === 1 ? "was" : "were"} added as{" "}
+                  {done.createdAsSubitems === 1 ? "a subitem" : "subitems"} instead of a duplicate.
+                </>
+              )}
             </p>
           ) : !rows ? (
             <label className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed border-hair py-10 text-sm text-muted hover:border-teal hover:text-teal">
@@ -273,7 +281,7 @@ function ImportModal({ board, onClose }: { board: BoardData; onClose: () => void
                         className="flex-1 rounded-lg border border-hair px-2 py-1.5 text-sm outline-none focus:border-teal"
                       >
                         <option value="">— Skip —</option>
-                        <option value="__name__">Item name</option>
+                        <option value="__name__">{board.itemColumnName || "Item"} name</option>
                         {board.columns
                           .filter((c) => !["connection", "mirror", "signature", "file"].includes(c.type))
                           .map((c) => (

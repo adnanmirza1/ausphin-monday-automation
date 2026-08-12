@@ -358,6 +358,7 @@ export function BoardView({
   return (
     <BoardUIProvider
       boardId={board.id}
+      itemColumnName={board.itemColumnName}
       departments={departments}
       templates={templates}
       employers={employers}
@@ -373,8 +374,15 @@ export function BoardView({
               <BoardTitle boardId={board.id} name={board.name} readOnly={readOnly} />
             </div>
             <div className="flex items-center gap-2">
-              {!readOnly && <DocsButton boardId={board.id} templates={templates} columns={board.columns} />}
-              {!readOnly && <DocuGenButton boardId={board.id} />}
+              {!readOnly && (
+                <DocsButton
+                  boardId={board.id}
+                  itemColumnName={board.itemColumnName || "Item"}
+                  templates={templates}
+                  columns={board.columns}
+                />
+              )}
+              {!readOnly && <DocuGenButton boardId={board.id} itemColumnName={board.itemColumnName || "Item"} />}
               {!readOnly && <FormButton boardId={board.id} forms={board.forms} columns={board.columns} groups={board.groups.map((g) => ({ id: g.id, name: g.name }))} openSignal={formsSignal} />}
               <ImportExportButton board={board} />
               {!readOnly && (

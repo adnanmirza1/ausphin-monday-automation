@@ -2,14 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireEditor, requireUser } from "@/lib/guard";
+import { requireEditor, requireUser, requireBoardEditor, requireBoardAccessAsUser } from "@/lib/guard";
 import { generateDocumentCore } from "@/lib/generate-doc";
 import { putFile, deleteFile } from "@/lib/blob-storage";
 import { extractPlaceholders } from "@/lib/docx-fill";
+import { buildPlaceholderList, resolveColumnBySlug, type PlaceholderRow } from "@/lib/placeholders";
 
 // ── Templates ─────────────────────────────────────────────────
 export async function createTemplate(boardId: string, name: string, body: string) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   await db.docTemplate.create({
     data: { boardId, name: name.trim() || "Untitled template", body },
   });
@@ -22,15 +23,16 @@ export async function updateTemplate(
   name: string,
   body: string
 ) {
-  await requireEditor();
-  await db.docTemplate.update({ where: { id }, data: { name: name.trim(), body } });
+  await requireBoardEditor(boardId);
+  await db.docTemplate.updateMany({ where: { id, boardId }, data: { name: name.trim(), body } });
   revalidatePath(`/boards/${boardId}`);
 }
 
 export async function deleteTemplate(boardId: string, id: string) {
-  await requireEditor();
-  const t = await db.docTemplate.findUnique({ where: { id }, select: { docxUrl: true } });
-  if (t?.docxUrl) await deleteFile(t.docxUrl);
+  await requireBoardEditor(boardId);
+  const t = await db.docTemplate.findFirst({ where: { id, boardId }, select: { docxUrl: true } });
+  if (!t) return;
+  if (t.docxUrl) await deleteFile(t.docxUrl);
   await db.docTemplate.delete({ where: { id } });
   revalidatePath(`/boards/${boardId}`);
 }
@@ -89,7 +91,7 @@ async function templateUsage(boardId: string): Promise<Map<string, number>> {
 }
 
 export async function getDocuGenData(boardId: string): Promise<DocuGenData> {
-  await requireUser();
+  await requireBoardAccessAsUser(boardId);
   const [templates, board, usage] = await Promise.all([
     db.docTemplate.findMany({ where: { boardId }, orderBy: [{ folder: "asc" }, { name: "asc" }] }),
     db.board.findUnique({ where: { id: boardId }, include: { columns: { orderBy: { position: "asc" } } } }),
@@ -122,6 +124,20 @@ export async function getDocuGenData(boardId: string): Promise<DocuGenData> {
   };
 }
 
+// Dynamic placeholder reference (Improvement 2) — Board Column | Placeholder
+// list for the DocuGen configuration UI. Uses buildPlaceholderList(), the
+// SAME function the fill engine's slug fallback resolves against
+// (see generate-doc.ts), so every row shown here is guaranteed fillable.
+export async function getPlaceholderList(boardId: string): Promise<PlaceholderRow[]> {
+  await requireBoardAccessAsUser(boardId);
+  const board = await db.board.findUnique({
+    where: { id: boardId },
+    include: { columns: { orderBy: { position: "asc" } } },
+  });
+  if (!board) return [];
+  return buildPlaceholderList(board.columns.map((c) => ({ id: c.id, name: c.name, type: c.type })));
+}
+
 // Next stable reference like DG-001 for a board.
 async function nextReference(boardId: string): Promise<string> {
   const existing = await db.docTemplate.findMany({ where: { boardId }, select: { reference: true } });
@@ -145,7 +161,7 @@ export async function uploadDocxTemplate(
   boardId: string,
   input: { name: string; fileName: string; dataUrl: string }
 ): Promise<UploadResult> {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   if (!/\.docx$/i.test(input.fileName)) return { ok: false, error: "Please upload a .docx file." };
   let buf: Buffer;
   try { buf = bufFromDataUrl(input.dataUrl); } catch { return { ok: false, error: "Could not read the file." }; }
@@ -159,11 +175,17 @@ export async function uploadDocxTemplate(
 
   const url = await putFile(`templates/${boardId}/${input.fileName}`, buf, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
   const reference = await nextReference(boardId);
-  // Auto-map placeholders whose name matches a column name (case-insensitive).
+  // Auto-map placeholders whose name matches a column name (case-insensitive,
+  // underscore-tolerant), falling back to a slug match (Improvement 2) — the
+  // same slug the fill engine's own fallback uses — so a placeholder typed
+  // straight from the reference list (e.g. {{first_name}}) auto-maps too.
   const board = await db.board.findUnique({ where: { id: boardId }, include: { columns: true } });
   const mapping: Record<string, string> = {};
   for (const p of placeholders) {
-    const col = board?.columns.find((c) => c.name.toLowerCase() === p.replace(/_/g, " ").toLowerCase() || c.name.toLowerCase() === p.toLowerCase());
+    const col =
+      board?.columns.find(
+        (c) => c.name.toLowerCase() === p.replace(/_/g, " ").toLowerCase() || c.name.toLowerCase() === p.toLowerCase()
+      ) ?? resolveColumnBySlug(p, board?.columns ?? []);
     if (col) mapping[p] = col.name;
   }
 
@@ -196,7 +218,7 @@ export async function saveTemplateMeta(
     outputFormat: string; outputColumnId: string | null;
   }>
 ): Promise<void> {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   const data: Record<string, unknown> = {};
   if (patch.name !== undefined) data.name = patch.name.trim() || "Untitled template";
   if (patch.viewName !== undefined) data.viewName = patch.viewName.trim();
@@ -207,7 +229,7 @@ export async function saveTemplateMeta(
   if (patch.mapping !== undefined) data.mapping = JSON.stringify(patch.mapping);
   if (patch.outputFormat !== undefined) data.outputFormat = patch.outputFormat;
   if (patch.outputColumnId !== undefined) data.outputColumnId = patch.outputColumnId;
-  await db.docTemplate.update({ where: { id }, data });
+  await db.docTemplate.updateMany({ where: { id, boardId }, data });
   revalidatePath(`/boards/${boardId}`);
 }
 
@@ -217,9 +239,9 @@ export async function replaceTemplateFile(
   id: string,
   input: { fileName: string; dataUrl: string; note?: string }
 ): Promise<UploadResult> {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   if (!/\.docx$/i.test(input.fileName)) return { ok: false, error: "Please upload a .docx file." };
-  const cur = await db.docTemplate.findUnique({ where: { id } });
+  const cur = await db.docTemplate.findFirst({ where: { id, boardId } });
   if (!cur) return { ok: false, error: "Template not found." };
   let buf: Buffer;
   try { buf = bufFromDataUrl(input.dataUrl); } catch { return { ok: false, error: "Could not read the file." }; }
@@ -240,8 +262,8 @@ export async function replaceTemplateFile(
 }
 
 export async function duplicateTemplate(boardId: string, id: string): Promise<void> {
-  await requireEditor();
-  const t = await db.docTemplate.findUnique({ where: { id } });
+  await requireBoardEditor(boardId);
+  const t = await db.docTemplate.findFirst({ where: { id, boardId } });
   if (!t) return;
   const reference = await nextReference(boardId);
   await db.docTemplate.create({
@@ -269,7 +291,7 @@ export async function duplicateTemplate(boardId: string, id: string): Promise<vo
 }
 
 export async function setTemplatesActive(boardId: string, ids: string[], active: boolean): Promise<void> {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   if (ids.length === 0) return;
   await db.docTemplate.updateMany({ where: { id: { in: ids }, boardId }, data: { active } });
   revalidatePath(`/boards/${boardId}`);
@@ -293,15 +315,15 @@ export async function generateDocument(
   itemId: string,
   templateId: string
 ): Promise<string | null> {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   const id = await generateDocumentCore(itemId, templateId);
   revalidatePath(`/boards/${boardId}`);
   return id;
 }
 
 export async function deleteDocument(boardId: string, id: string) {
-  await requireEditor();
-  await db.generatedDocument.delete({ where: { id } });
+  await requireBoardEditor(boardId);
+  await db.generatedDocument.deleteMany({ where: { id, item: { boardId } } });
   revalidatePath(`/boards/${boardId}`);
 }
 
@@ -396,7 +418,7 @@ export async function listDocuSignTemplates(): Promise<DsTemplateRow[]> {
 
 // Manually refresh an item's DocuSign envelope statuses (also pulls signed file).
 export async function refreshEnvelopes(boardId: string, itemId: string): Promise<void> {
-  const user = await requireEditor();
+  const user = await requireBoardEditor(boardId);
   const { syncEnvelope } = await import("@/lib/docusign-sync");
   const envs = await db.docuSignEnvelope.findMany({ where: { itemId, orgId: user.orgId, envelopeId: { not: "" } } });
   for (const e of envs) await syncEnvelope(e.id);

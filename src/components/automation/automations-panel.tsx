@@ -17,6 +17,10 @@ type Col = { id: string; name: string; type: string; labels: StatusLabel[] };
 type Grp = { id: string; name: string; color: string };
 type Dep = { id: string; name: string };
 type Tpl = { id: string; name: string; reference?: string; viewName?: string; employer?: string; active?: boolean };
+// Lightweight column shape for OTHER boards (destination pickers) — no
+// parsed labels needed there, just enough to drive the mapping UI.
+type BoardCol = { id: string; name: string; type: string };
+type FieldMapping = { sourceColumnId: string; destColumnId: string };
 
 // Rich label for a DocuGen template: Name – View – Reference – Employer.
 function tplLabel(t: Tpl): string {
@@ -35,22 +39,26 @@ type Auto = {
 export function AutomationsPanel({
   boardId,
   boardName,
+  itemColumnName = "Item",
   environmentName,
   columns,
   groups,
   departments,
   templates,
   boards = [],
+  boardColumnsMap = {},
   automations,
 }: {
   boardId: string;
   boardName: string;
+  itemColumnName?: string;
   environmentName: string;
   columns: Col[];
   groups: Grp[];
   departments: Dep[];
   templates: Tpl[];
   boards?: { id: string; name: string }[];
+  boardColumnsMap?: Record<string, BoardCol[]>;
   automations: Auto[];
 }) {
   const [q, setQ] = useState("");
@@ -198,6 +206,7 @@ export function AutomationsPanel({
       {(creating || editing) && (
         <CreateModal
           boardId={boardId}
+          itemColumnName={itemColumnName}
           statusCols={statusCols}
           personCols={personCols}
           numberCols={numberCols}
@@ -205,6 +214,7 @@ export function AutomationsPanel({
           dateCols={dateCols}
           allColumns={columns}
           boards={boards}
+          boardColumnsMap={boardColumnsMap}
           groups={groups}
           departments={departments}
           templates={templates}
@@ -262,8 +272,16 @@ function describeAction(a: SafeObj, columns: Col[], groups: Grp[], departments: 
   if (a?.type === "request_invoice")
     return `request an invoice to Finance (${a.account === "global" ? "Global" : "PTY"})`;
   if (a?.type === "send_email") return `send an email${a.subject ? ` “${a.subject}”` : ""}`;
-  if (a?.type === "create_item_in_board")
-    return `create an item in another board${a.connect ? " (connected)" : ""}`;
+  if (a?.type === "create_item_in_board") {
+    const n = Array.isArray(a.fieldMapping) ? a.fieldMapping.length : 0;
+    return `create an item in another board${n ? ` (${n} field${n === 1 ? "" : "s"} mapped)` : ""}${a.connect ? " (connected)" : ""}`;
+  }
+  if (a?.type === "create_subitem_by_email")
+    return `create a subitem here for the matching item by email`;
+  if (a?.type === "create_subitem_in_board") {
+    const n = Array.isArray(a.fieldMapping) ? a.fieldMapping.length : 0;
+    return `create a subitem on another board for the matching item by email${n ? ` (${n} field${n === 1 ? "" : "s"} mapped)` : ""}`;
+  }
   if (a?.type === "send_docusign")
     return `send for e-signature via DocuSign${a.docusignTemplateId ? " (template)" : ""}`;
   if (a?.type === "set_date")
@@ -434,7 +452,9 @@ type ActionType =
   | "send_email"
   | "create_item_in_board"
   | "set_date"
-  | "send_docusign";
+  | "send_docusign"
+  | "create_subitem_by_email"
+  | "create_subitem_in_board";
 
 type ActionDraft = {
   key: string;
@@ -468,6 +488,11 @@ type ActionDraft = {
   dsMessage?: string;
   dsStatusCol?: string;
   dsSignedCol?: string;
+  // create_item_in_board / create_subitem_in_board (Automations 1 & 3):
+  // dynamic source->destination column mapping, plus the source-board email
+  // column to match on (subitem actions only).
+  fieldMapping?: FieldMapping[];
+  subEmailCol?: string;
 };
 
 let draftSeq = 0;
@@ -476,7 +501,7 @@ const draftKey = () => `d${++draftSeq}`;
 // Convert a persisted Action object into an editable ActionDraft with defaults.
 function toDraft(
   a: SafeObj,
-  d: { groups: Grp[]; statusCols: Col[]; personCols: Col[]; numberCols: Col[]; emailCols: Col[]; dateCols: Col[]; allColumns: Col[]; boards: { id: string; name: string }[]; boardId: string; departments: Dep[]; templates: Tpl[] }
+  d: { groups: Grp[]; statusCols: Col[]; personCols: Col[]; numberCols: Col[]; emailCols: Col[]; dateCols: Col[]; allColumns: Col[]; boards: { id: string; name: string }[]; boardColumnsMap: Record<string, BoardCol[]>; boardId: string; departments: Dep[]; templates: Tpl[] }
 ): ActionDraft {
   const t: ActionType = a?.type ?? "move_to_group";
   return {
@@ -496,7 +521,10 @@ function toDraft(
     emailCol: (t === "send_email" ? a?.toColumnId : "") || d.emailCols[0]?.id || d.allColumns.find((c) => c.type === "email")?.id || "",
     subject: t === "send_email" ? a?.subject ?? "" : "",
     body: t === "send_email" ? a?.body ?? "" : "",
-    targetBoard: (t === "create_item_in_board" ? a?.boardId : "") || d.boards.find((b) => b.id !== d.boardId)?.id || "",
+    targetBoard:
+      (t === "create_item_in_board" || t === "create_subitem_in_board" ? a?.boardId : "") ||
+      d.boards.find((b) => b.id !== d.boardId)?.id ||
+      "",
     connect: t === "create_item_in_board" ? !!a?.connect : true,
     dateCol: (t === "set_date" ? a?.columnId : "") || d.dateCols[0]?.id || "",
     dateMode: t === "set_date" ? a?.mode ?? "specific" : "specific",
@@ -510,6 +538,14 @@ function toDraft(
     dsMessage: t === "send_docusign" ? a?.message ?? "" : "",
     dsStatusCol: (t === "send_docusign" ? a?.statusColumnId : "") || "",
     dsSignedCol: (t === "send_docusign" ? a?.signedColumnId : "") || "",
+    fieldMapping:
+      (t === "create_item_in_board" || t === "create_subitem_in_board") && Array.isArray(a?.fieldMapping)
+        ? a.fieldMapping
+        : [],
+    subEmailCol:
+      (t === "create_subitem_by_email" || t === "create_subitem_in_board" ? a?.emailColumnId : "") ||
+      d.emailCols[0]?.id ||
+      "",
   };
 }
 
@@ -533,7 +569,21 @@ function buildAction(a: ActionDraft): Record<string, unknown> {
     case "send_email":
       return { type: "send_email", toColumnId: a.emailCol || undefined, subject: a.subject ?? "", body: a.body ?? "" };
     case "create_item_in_board":
-      return { type: "create_item_in_board", boardId: a.targetBoard, connect: a.connect };
+      return {
+        type: "create_item_in_board",
+        boardId: a.targetBoard,
+        connect: a.connect,
+        fieldMapping: (a.fieldMapping ?? []).filter((m) => m.sourceColumnId && m.destColumnId),
+      };
+    case "create_subitem_by_email":
+      return { type: "create_subitem_by_email", emailColumnId: a.subEmailCol || undefined };
+    case "create_subitem_in_board":
+      return {
+        type: "create_subitem_in_board",
+        boardId: a.targetBoard,
+        emailColumnId: a.subEmailCol || undefined,
+        fieldMapping: (a.fieldMapping ?? []).filter((m) => m.sourceColumnId && m.destColumnId),
+      };
     case "set_date":
       return {
         type: "set_date",
@@ -562,6 +612,7 @@ function buildAction(a: ActionDraft): Record<string, unknown> {
 /* ── create modal (builder) ───────────────────────── */
 function CreateModal({
   boardId,
+  itemColumnName,
   statusCols,
   personCols,
   numberCols,
@@ -569,6 +620,7 @@ function CreateModal({
   dateCols,
   allColumns,
   boards,
+  boardColumnsMap,
   groups,
   departments,
   templates,
@@ -577,6 +629,7 @@ function CreateModal({
   onClose,
 }: {
   boardId: string;
+  itemColumnName: string;
   statusCols: Col[];
   personCols: Col[];
   numberCols: Col[];
@@ -584,6 +637,7 @@ function CreateModal({
   dateCols: Col[];
   allColumns: Col[];
   boards: { id: string; name: string }[];
+  boardColumnsMap: Record<string, BoardCol[]>;
   groups: Grp[];
   departments: Dep[];
   templates: Tpl[];
@@ -593,7 +647,7 @@ function CreateModal({
 }) {
   const et = safe(existing?.trigger ?? "{}") ?? {};
   const ea = safe(existing?.action ?? "{}") ?? {};
-  const draftDeps = { groups, statusCols, personCols, numberCols, emailCols, dateCols, allColumns, boards, boardId, departments, templates };
+  const draftDeps = { groups, statusCols, personCols, numberCols, emailCols, dateCols, allColumns, boards, boardColumnsMap, boardId, departments, templates };
 
   const [name, setName] = useState(existing?.name ?? "");
   const [folder, setFolder] = useState(existing?.folder || "General");
@@ -793,12 +847,15 @@ function CreateModal({
               <ActionEditor
                 a={a}
                 onPatch={(patch) => patchAction(a.key, patch)}
+                itemColumnName={itemColumnName}
                 statusCols={statusCols}
                 personCols={personCols}
                 numberCols={numberCols}
+                emailCols={emailCols}
                 dateCols={dateCols}
                 allColumns={allColumns}
                 boards={boards}
+                boardColumnsMap={boardColumnsMap}
                 boardId={boardId}
                 groups={groups}
                 departments={departments}
@@ -837,12 +894,15 @@ function CreateModal({
 function ActionEditor({
   a,
   onPatch,
+  itemColumnName,
   statusCols,
   personCols,
   numberCols,
+  emailCols,
   dateCols,
   allColumns,
   boards,
+  boardColumnsMap,
   boardId,
   groups,
   departments,
@@ -850,12 +910,15 @@ function ActionEditor({
 }: {
   a: ActionDraft;
   onPatch: (patch: Partial<ActionDraft>) => void;
+  itemColumnName: string;
   statusCols: Col[];
   personCols: Col[];
   numberCols: Col[];
+  emailCols: Col[];
   dateCols: Col[];
   allColumns: Col[];
   boards: { id: string; name: string }[];
+  boardColumnsMap: Record<string, BoardCol[]>;
   boardId: string;
   groups: Grp[];
   departments: Dep[];
@@ -898,6 +961,8 @@ function ActionEditor({
         <option value="request_invoice">Request an invoice (to Finance)</option>
         <option value="send_email">Send an email</option>
         <option value="create_item_in_board">Create item in another board</option>
+        <option value="create_subitem_by_email">Create subitem here (match by email)</option>
+        <option value="create_subitem_in_board">Create subitem in another board (match by email)</option>
         <option value="set_date">Set a date</option>
         <option value="send_docusign">Send for e-signature (DocuSign)</option>
       </select>
@@ -1060,7 +1125,7 @@ function ActionEditor({
                   className="rounded-full border border-hair px-2 py-0.5 text-[11px] font-medium text-teal hover:border-teal hover:bg-teal/5"
                   title={`Insert {{${t}}}`}
                 >
-                  + {t === "Item" ? "Item name" : t}
+                  + {t === "Item" ? `${itemColumnName} name` : t}
                 </button>
               ))}
             </div>
@@ -1085,6 +1150,74 @@ function ActionEditor({
             <input type="checkbox" checked={!!a.connect} onChange={(e) => onPatch({ connect: e.target.checked })} />
             Connect the two items (enables mirror columns)
           </label>
+          <FieldMappingEditor
+            sourceColumns={allColumns}
+            destColumns={boardColumnsMap[a.targetBoard ?? ""] ?? []}
+            mapping={a.fieldMapping ?? []}
+            onChange={(fieldMapping) => onPatch({ fieldMapping })}
+            emptyHint="No mapping configured — the item's name and email (if any) will be copied by default."
+          />
+        </div>
+      )}
+
+      {a.type === "create_subitem_by_email" && (
+        <div className="mt-2 grid gap-2">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-body">
+              Match using this email column
+            </label>
+            <select value={a.subEmailCol} onChange={(e) => onPatch({ subEmailCol: e.target.value })} className={inp}>
+              <option value="">Board&rsquo;s first email column</option>
+              {emailCols.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            {emailCols.length === 0 && (
+              <p className="mt-1 text-[11px] text-amber">
+                This board has no email column yet — add one to use this action.
+              </p>
+            )}
+          </div>
+          <p className="text-[11px] text-muted">
+            When the trigger fires, this item is moved under the existing item on this board whose
+            email matches (case-insensitive, whitespace-trimmed) — no duplicate main item is created.
+          </p>
+        </div>
+      )}
+
+      {a.type === "create_subitem_in_board" && (
+        <div className="mt-2 grid gap-2">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-body">Destination board</label>
+            <select value={a.targetBoard} onChange={(e) => onPatch({ targetBoard: e.target.value })} className={inp}>
+              {boards.filter((b) => b.id !== boardId).length === 0 && <option value="">No other boards</option>}
+              {boards.filter((b) => b.id !== boardId).map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-body">
+              Match using this email column (on this board)
+            </label>
+            <select value={a.subEmailCol} onChange={(e) => onPatch({ subEmailCol: e.target.value })} className={inp}>
+              <option value="">Board&rsquo;s first email column</option>
+              {emailCols.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <p className="text-[11px] text-muted">
+            Finds the item on the destination board whose email matches this one, and adds this
+            record as a subitem underneath it — never a duplicate main item.
+          </p>
+          <FieldMappingEditor
+            sourceColumns={allColumns}
+            destColumns={boardColumnsMap[a.targetBoard ?? ""] ?? []}
+            mapping={a.fieldMapping ?? []}
+            onChange={(fieldMapping) => onPatch({ fieldMapping })}
+            emptyHint="No mapping configured — only the matched email will be copied onto the subitem."
+          />
         </div>
       )}
 
@@ -1139,7 +1272,7 @@ function ActionEditor({
           <div>
             <label className="mb-1 block text-xs font-semibold text-body">Recipient name (column)</label>
             <select value={a.dsNameCol} onChange={(e) => onPatch({ dsNameCol: e.target.value })} className={inp}>
-              <option value="">Item name</option>
+              <option value="">{itemColumnName} name</option>
               {allColumns.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
             </select>
           </div>
@@ -1261,6 +1394,71 @@ function DocuGenPicker({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// Flexible source-column -> destination-column mapping (Automations 1 & 3).
+// Mirrors the CSV import mapping pattern (src/components/board/data-io.tsx):
+// one row per source column, a dropdown to pick the destination column or
+// skip it. Options are generated dynamically from each board's actual
+// columns — never hardcoded — and the destination list is filtered to types
+// that can sensibly receive a value (mirrors ImportModal's exclusions).
+function FieldMappingEditor({
+  sourceColumns,
+  destColumns,
+  mapping,
+  onChange,
+  emptyHint,
+}: {
+  sourceColumns: Col[];
+  destColumns: BoardCol[];
+  mapping: FieldMapping[];
+  onChange: (m: FieldMapping[]) => void;
+  emptyHint: string;
+}) {
+  const destOptions = destColumns.filter((c) => !["connection", "mirror", "signature", "file"].includes(c.type));
+
+  function destFor(sourceColumnId: string): string {
+    return mapping.find((m) => m.sourceColumnId === sourceColumnId)?.destColumnId ?? "";
+  }
+  function setDest(sourceColumnId: string, destColumnId: string) {
+    const rest = mapping.filter((m) => m.sourceColumnId !== sourceColumnId);
+    onChange(destColumnId ? [...rest, { sourceColumnId, destColumnId }] : rest);
+  }
+
+  if (destColumns.length === 0) {
+    return (
+      <p className="rounded-lg border border-dashed border-hair px-3 py-2 text-xs text-muted">
+        Select a destination board above to map fields.
+      </p>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-hair bg-white p-2.5">
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+        Field mapping (optional)
+      </p>
+      <div className="space-y-1.5">
+        {sourceColumns.map((c) => (
+          <div key={c.id} className="flex items-center gap-2">
+            <span className="w-1/3 truncate text-xs text-body" title={c.name}>{c.name}</span>
+            <span className="text-muted">→</span>
+            <select
+              value={destFor(c.id)}
+              onChange={(e) => setDest(c.id, e.target.value)}
+              className="flex-1 rounded-lg border border-hair px-2 py-1.5 text-sm outline-none focus:border-teal"
+            >
+              <option value="">— Skip —</option>
+              {destOptions.map((dc) => (
+                <option key={dc.id} value={dc.id}>{dc.name}</option>
+              ))}
+            </select>
+          </div>
+        ))}
+      </div>
+      {mapping.length === 0 && <p className="mt-1.5 text-[11px] text-muted">{emptyHint}</p>}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { generateDocumentCore } from "@/lib/generate-doc";
 import { sendMail, mailerConfigured } from "@/lib/mailer";
 import { urlDisplay, parseFileValue } from "@/lib/cell-values";
+import { normalizeEmail, findMatchingParent, createSubitem, getEmailColumn } from "@/lib/subitems";
 
 // Events emitted by board mutations.
 export type AutomationEvent =
@@ -19,6 +20,12 @@ type Trigger =
   | { type: "person_assigned"; columnId: string }
   | { type: "item_moved"; groupId: string }; // groupId | "any"
 
+// Source column -> destination column, used by the two "create item/subitem
+// on another board" actions (Automations 1 & 3) for flexible field transfer.
+// Both ids are validated server-side at execution time — a stale mapping
+// (deleted column) is simply skipped, never trusted blindly.
+export type FieldMapping = { sourceColumnId: string; destColumnId: string };
+
 type Action =
   | { type: "move_to_group"; groupId: string }
   | { type: "set_status"; columnId: string; to: string }
@@ -27,7 +34,11 @@ type Action =
   | { type: "generate_document"; templateId: string }
   | { type: "request_invoice"; account: string; amountColumnId?: string }
   | { type: "send_email"; toColumnId?: string; subject: string; body: string }
-  | { type: "create_item_in_board"; boardId: string; connect?: boolean }
+  // Automation 1: "create item on another board" — fieldMapping lets the user
+  // choose which source columns feed which destination columns. When absent
+  // (legacy rules saved before this feature), falls back to the original
+  // behavior: copy the item name + the first email column.
+  | { type: "create_item_in_board"; boardId: string; connect?: boolean; fieldMapping?: FieldMapping[] }
   | { type: "set_date"; columnId: string; mode: "specific" | "today" | "offset"; date?: string; offsetDays?: number }
   | { type: "change_column_value"; columnId: string; value: string }
   | {
@@ -40,6 +51,20 @@ type Action =
       message?: string;
       statusColumnId?: string;
       signedColumnId?: string;
+    }
+  // Automation 2: "when a status changes, create a subitem under the item on
+  // THIS board whose email column matches this item's email." emailColumnId
+  // is the column to read the triggering item's email from (defaults to the
+  // board's first email column when omitted).
+  | { type: "create_subitem_by_email"; emailColumnId?: string }
+  // Automation 3: "when an item is created, find the matching item (by
+  // email) on ANOTHER board and add this item as a subitem there," with the
+  // same flexible field mapping as create_item_in_board.
+  | {
+      type: "create_subitem_in_board";
+      boardId: string;
+      emailColumnId?: string; // source-board column to read the email from
+      fieldMapping?: FieldMapping[];
     };
 
 // A stored action is either a single action or a sequence (multiple THEN steps).
@@ -100,6 +125,100 @@ async function renderTemplate(itemId: string, text: string): Promise<string> {
     map[c.column.name.toLowerCase()] = v;
   }
   return text.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, k) => map[String(k).toLowerCase()] ?? "");
+}
+
+// Meaningful success/error logging for automations that create records
+// elsewhere (Automations 1-3), posted to the triggering item's timeline —
+// same place users already look for automation activity (see send_email /
+// send_docusign's `note`/`status` entries above).
+async function logAutomation(itemId: string, message: string) {
+  await db.update.create({ data: { itemId, body: message, mentions: "[]" } }).catch(() => {});
+}
+
+type SrcCell = {
+  columnId: string;
+  value: string | null;
+  personId: string | null;
+  column: { type: string; config: string };
+  person: { id: string; name: string } | null;
+};
+type DestColumn = { id: string; type: string; config: string };
+
+// Resolve one source cell to a display string, mirroring renderTemplate's
+// per-type formatting (status label text, person name, url display, file
+// names) so mapped values read the same as everywhere else in the app.
+function displayValue(cell: SrcCell | undefined): string {
+  if (!cell) return "";
+  if (cell.column.type === "status") {
+    try {
+      const labels: { id: string; label: string }[] = JSON.parse(cell.column.config).labels ?? [];
+      return labels.find((l) => l.id === cell.value)?.label ?? "";
+    } catch {
+      return "";
+    }
+  }
+  if (cell.column.type === "person") return cell.person?.name ?? "";
+  if (cell.column.type === "url") return urlDisplay(cell.value);
+  if (cell.column.type === "file") return parseFileValue(cell.value).map((f) => f.name).join(", ");
+  return cell.value ?? "";
+}
+
+// Apply a source->destination field mapping (Automations 1 & 3) onto a
+// freshly-created item. Handles missing/null source values safely (skipped,
+// never writes empty cells) and adapts the value to the destination
+// column's type:
+//  - status -> status: match by label text (case-insensitive), else skip
+//    (never invents a label that doesn't exist on the destination column).
+//  - person -> person: copy the personId directly when the destination is
+//    also a person column (same org, so the id is meaningful there).
+//  - anything -> text/longtext/email/phone/url: write the resolved display
+//    text.
+async function applyFieldMapping(
+  srcCells: SrcCell[],
+  destColumns: DestColumn[],
+  mapping: FieldMapping[],
+  destItemId: string
+) {
+  for (const m of mapping) {
+    const srcCell = srcCells.find((c) => c.columnId === m.sourceColumnId);
+    const destCol = destColumns.find((c) => c.id === m.destColumnId);
+    if (!destCol) continue;
+
+    if (destCol.type === "status") {
+      const text = displayValue(srcCell);
+      if (!text) continue;
+      let labels: { id: string; label: string }[] = [];
+      try {
+        labels = JSON.parse(destCol.config).labels ?? [];
+      } catch {}
+      const match = labels.find((l) => l.label.trim().toLowerCase() === text.trim().toLowerCase());
+      if (!match) continue; // never invent a label the column doesn't have
+      await db.cell.upsert({
+        where: { itemId_columnId: { itemId: destItemId, columnId: destCol.id } },
+        create: { itemId: destItemId, columnId: destCol.id, value: match.id },
+        update: { value: match.id },
+      });
+      continue;
+    }
+
+    if (destCol.type === "person") {
+      if (srcCell?.column.type !== "person" || !srcCell.personId) continue;
+      await db.cell.upsert({
+        where: { itemId_columnId: { itemId: destItemId, columnId: destCol.id } },
+        create: { itemId: destItemId, columnId: destCol.id, value: srcCell.personId, personId: srcCell.personId },
+        update: { value: srcCell.personId, personId: srcCell.personId },
+      });
+      continue;
+    }
+
+    const text = displayValue(srcCell);
+    if (!text) continue; // missing/null values handled safely — nothing written
+    await db.cell.upsert({
+      where: { itemId_columnId: { itemId: destItemId, columnId: destCol.id } },
+      create: { itemId: destItemId, columnId: destCol.id, value: text },
+      update: { value: text },
+    });
+  }
 }
 
 // Runs a single non-recursive pass of automations for the board & event.
@@ -433,29 +552,62 @@ async function execute(action: Action, event: AutomationEvent) {
     case "create_item_in_board": {
       const src = await db.item.findUnique({
         where: { id: itemId },
-        include: { cells: { include: { column: true } }, board: { include: { columns: true } } },
+        include: { cells: { include: { column: true, person: true } }, board: { include: { columns: true } } },
       });
       if (!src) break;
+      // Validate the destination board exists and belongs to the same org as
+      // the source board — never trust a stored boardId blindly (it was
+      // chosen by a user with access at save time, but boards can be
+      // archived/deleted since, and a stale id must not silently write
+      // cross-org data).
+      const destBoard = await db.board.findUnique({
+        where: { id: action.boardId },
+        include: { columns: true, environment: true },
+      });
+      const srcOrg = await db.board.findUnique({
+        where: { id: src.boardId },
+        select: { environment: { select: { orgId: true } } },
+      });
+      if (!destBoard || destBoard.archivedAt || destBoard.environment.orgId !== srcOrg?.environment.orgId) {
+        await logAutomation(itemId, `⚡ Create item in board: skipped — destination board unavailable.`);
+        break;
+      }
       const targetGroup = await db.group.findFirst({
         where: { boardId: action.boardId },
         orderBy: { position: "asc" },
       });
-      if (!targetGroup) break;
+      if (!targetGroup) {
+        await logAutomation(itemId, `⚡ Create item in board: skipped — "${destBoard.name}" has no group to receive it.`);
+        break;
+      }
       const count = await db.item.count({ where: { groupId: targetGroup.id } });
+      // Field mapping (Automation 1): explicit source->destination column
+      // pairs chosen by the user. Falls back to the legacy behavior (copy
+      // name + first email column) when no mapping is configured, so
+      // existing automations saved before this feature keep working exactly
+      // as before.
+      const mapping = (action.fieldMapping ?? []).filter(
+        (m) => src.board.columns.some((c) => c.id === m.sourceColumnId) &&
+          destBoard.columns.some((c) => c.id === m.destColumnId)
+      );
       const newItem = await db.item.create({
         data: { boardId: action.boardId, groupId: targetGroup.id, name: src.name, position: count },
       });
-      // Copy the email value across so the two records can be matched/mirrored.
-      const srcEmail = src.cells.find((c) => c.column.type === "email");
-      if (srcEmail?.value) {
-        const targetEmailCol = await db.column.findFirst({
-          where: { boardId: action.boardId, type: "email" },
-        });
-        if (targetEmailCol)
-          await db.cell.create({
-            data: { itemId: newItem.id, columnId: targetEmailCol.id, value: srcEmail.value },
-          });
+      if (mapping.length > 0) {
+        await applyFieldMapping(src.cells, destBoard.columns, mapping, newItem.id);
+      } else {
+        // Legacy fallback: copy the email value across so the two records
+        // can still be matched/mirrored.
+        const srcEmail = src.cells.find((c) => c.column.type === "email");
+        if (srcEmail?.value) {
+          const targetEmailCol = destBoard.columns.find((c) => c.type === "email");
+          if (targetEmailCol)
+            await db.cell.create({
+              data: { itemId: newItem.id, columnId: targetEmailCol.id, value: srcEmail.value },
+            });
+        }
       }
+      await logAutomation(itemId, `⚡ Created item "${src.name}" on "${destBoard.name}".`);
       // Optionally link the source item to the new one via a connection column
       // on the source board that targets action.boardId (enables mirrors).
       if (action.connect) {
@@ -475,6 +627,127 @@ async function execute(action: Action, event: AutomationEvent) {
           });
       }
       await runAutomations({ type: "item_created", boardId: action.boardId, itemId: newItem.id });
+      break;
+    }
+
+    // Automation 2: status changes -> create a subitem under the matching
+    // item (by email) on THIS board.
+    case "create_subitem_by_email": {
+      const boardId = event.boardId;
+      const emailColumn = action.emailColumnId
+        ? await db.column.findFirst({ where: { id: action.emailColumnId, boardId } })
+        : await getEmailColumn(boardId);
+      if (!emailColumn) {
+        await logAutomation(itemId, `⚡ Create subitem: skipped — no email column configured on this board.`);
+        break;
+      }
+      const triggering = await db.item.findUnique({
+        where: { id: itemId },
+        select: { id: true, name: true, parentId: true, cells: { where: { columnId: emailColumn.id }, select: { value: true } } },
+      });
+      if (!triggering) break;
+      const email = normalizeEmail(triggering.cells[0]?.value);
+      if (!email) {
+        await logAutomation(itemId, `⚡ Create subitem: skipped — this item has no email in "${emailColumn.name}".`);
+        break;
+      }
+      const parent = await findMatchingParent(boardId, emailColumn.id, email);
+      if (!parent) {
+        await logAutomation(itemId, `⚡ Create subitem: skipped — no existing item matches "${email}".`);
+        break;
+      }
+      // The triggering item IS the record to (re)nest — if it's already the
+      // matching parent itself, or already a subitem of it, there's nothing
+      // to do (prevents a self-referential or duplicate subitem). Otherwise
+      // the triggering item itself is reparented under the match — it must
+      // NOT be duplicated as a fresh copy, or the board would end up with
+      // both the original item AND a new subitem carrying the same data.
+      if (parent.id === itemId || triggering.parentId === parent.id) break;
+      await db.item.update({
+        where: { id: itemId },
+        data: { parentId: parent.id, groupId: parent.groupId },
+      });
+      await db.update.create({
+        data: { itemId, body: `⚡ Moved under "${parent.name}" as a subitem — email matched.`, mentions: "[]" },
+      });
+      await logAutomation(parent.id, `⚡ "${triggering.name}" added as a subitem (email match).`);
+      break;
+    }
+
+    // Automation 3: item created (with an email) -> find the matching item
+    // by email on ANOTHER board, and create this record as a subitem there.
+    case "create_subitem_in_board": {
+      const src = await db.item.findUnique({
+        where: { id: itemId },
+        include: { cells: { include: { column: true, person: true } }, board: { include: { columns: true } } },
+      });
+      if (!src) break;
+
+      const destBoard = await db.board.findUnique({
+        where: { id: action.boardId },
+        include: { columns: true, environment: true },
+      });
+      const srcOrg = await db.board.findUnique({
+        where: { id: src.boardId },
+        select: { environment: { select: { orgId: true } } },
+      });
+      if (!destBoard || destBoard.archivedAt || destBoard.environment.orgId !== srcOrg?.environment.orgId) {
+        await logAutomation(itemId, `⚡ Create subitem on another board: skipped — destination board unavailable.`);
+        break;
+      }
+
+      const srcEmailCol = action.emailColumnId
+        ? src.board.columns.find((c) => c.id === action.emailColumnId)
+        : src.board.columns.find((c) => c.type === "email");
+      const srcEmail = srcEmailCol ? src.cells.find((c) => c.columnId === srcEmailCol.id) : undefined;
+      const email = normalizeEmail(srcEmail?.value);
+      if (!email) {
+        await logAutomation(itemId, `⚡ Create subitem on another board: skipped — no email to match on.`);
+        break;
+      }
+
+      const destEmailCol = destBoard.columns.find((c) => c.type === "email");
+      if (!destEmailCol) {
+        await logAutomation(itemId, `⚡ Create subitem on another board: skipped — "${destBoard.name}" has no email column.`);
+        break;
+      }
+      const parent = await findMatchingParent(destBoard.id, destEmailCol.id, email);
+      if (!parent) {
+        await logAutomation(itemId, `⚡ Create subitem on another board: skipped — no item on "${destBoard.name}" matches "${email}".`);
+        break;
+      }
+
+      // Duplicate-execution guard: if this automation already ran for this
+      // source item (e.g. the event fired twice), don't create a second
+      // subitem under the same parent for the same source record.
+      const alreadyCreated = await db.item.findFirst({
+        where: { parentId: parent.id, name: src.name },
+        select: { id: true },
+      });
+      if (alreadyCreated) {
+        await logAutomation(itemId, `⚡ Create subitem on another board: skipped — already added under "${parent.name}".`);
+        break;
+      }
+
+      const mapping = (action.fieldMapping ?? []).filter(
+        (m) => src.board.columns.some((c) => c.id === m.sourceColumnId) &&
+          destBoard.columns.some((c) => c.id === m.destColumnId)
+      );
+      const sub = await createSubitem(destBoard.id, parent.id, parent.groupId, src.name);
+      if (mapping.length > 0) {
+        await applyFieldMapping(src.cells, destBoard.columns, mapping, sub.id);
+      } else if (destEmailCol) {
+        // No explicit mapping: at least keep the matched email on the subitem.
+        await db.cell.upsert({
+          where: { itemId_columnId: { itemId: sub.id, columnId: destEmailCol.id } },
+          create: { itemId: sub.id, columnId: destEmailCol.id, value: srcEmail?.value ?? null },
+          update: { value: srcEmail?.value ?? null },
+        });
+      }
+      await db.update.create({
+        data: { itemId: sub.id, body: `⚡ Added as a subitem from "${src.board.name}" — email match.`, mentions: "[]" },
+      });
+      await logAutomation(itemId, `⚡ Added as a subitem of "${parent.name}" on "${destBoard.name}" (email match).`);
       break;
     }
   }

@@ -49,6 +49,18 @@ export type ItemData = {
   id: string;
   name: string;
   cells: Record<string, CellData>; // keyed by columnId
+  // Subitems (Feature 1): records grouped under this item because they share
+  // its email (auto-matched) or were explicitly added underneath it. Only
+  // main items carry subitems — a subitem's own `subitems` is always [].
+  subitems: SubitemData[];
+};
+
+// A lightweight row for a subitem — enough to render inline under its parent
+// without duplicating the full column-rendering machinery of ItemData.
+export type SubitemData = {
+  id: string;
+  name: string;
+  cells: Record<string, CellData>;
 };
 
 export type GroupData = {
@@ -99,6 +111,9 @@ export type BoardData = {
   name: string;
   description: string;
   environmentName: string;
+  // Display label for the built-in Item/name column (Improvement 3). Falls
+  // back to "Item" everywhere it's rendered when empty.
+  itemColumnName: string;
   columns: ColumnData[];
   groups: GroupData[];
   form: FormConfig;

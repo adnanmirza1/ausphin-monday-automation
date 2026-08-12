@@ -208,6 +208,11 @@ model Board {
   createdAt     DateTime @default(now())
   archivedAt    DateTime? // soft-delete → shows in Archive/Trash, restorable
 
+  // Display label for the built-in "Item" column (Improvement 3), e.g.
+  // "Candidate Name". Empty string = show the default "Item" label. This is a
+  // presentation-only override — item ids/relationships/APIs are unaffected.
+  itemColumnName String @default("")
+
   // Public intake form (Part 10)
   formEnabled Boolean @default(false)
   formTitle   String  @default("")
@@ -276,11 +281,18 @@ model Item {
   groupId   String
   name      String
   position  Int      @default(0)
+  // Subitems (Feature 1): when set, this item is a subitem/endorsement nested
+  // under `parent`, typically created when a new record matches an existing
+  // item's email so we group related records under one person instead of
+  // duplicating the main item. Null = a normal/main item.
+  parentId  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   board       Board               @relation(fields: [boardId], references: [id], onDelete: Cascade)
   group       Group               @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  parent      Item?               @relation("ItemSubitems", fields: [parentId], references: [id], onDelete: Cascade)
+  subitems    Item[]              @relation("ItemSubitems")
   cells       Cell[]
   updates     Update[]
   documents   GeneratedDocument[]
@@ -290,6 +302,7 @@ model Item {
 
   @@index([boardId])
   @@index([groupId])
+  @@index([parentId])
 }
 
 // value holds the raw cell value (string / ISO date / number / label id).

@@ -40,6 +40,8 @@ export async function getArchive(orgId: string) {
 }
 
 // Full board with groups, columns, and items (+cells) for the board view.
+// Top-level items also carry their subitems (Feature 1), one level deep —
+// a subitem never has subitems of its own.
 export async function getBoard(boardId: string) {
   return db.board.findUnique({
     where: { id: boardId },
@@ -51,9 +53,14 @@ export async function getBoard(boardId: string) {
         orderBy: { position: "asc" },
         include: {
           items: {
+            where: { parentId: null },
             orderBy: { position: "asc" },
             include: {
               cells: { include: { person: true } },
+              subitems: {
+                orderBy: { position: "asc" },
+                include: { cells: { include: { person: true } } },
+              },
             },
           },
         },

@@ -7,6 +7,7 @@ import type {
   ColumnData,
   GroupData,
   ItemData,
+  SubitemData,
   PersonLite,
   PermData,
   CustomEdit,
@@ -25,6 +26,7 @@ import {
   addGroup,
   renameItem,
   deleteItem,
+  addSubitem,
   renameGroup,
   setGroupColor,
   deleteGroup,
@@ -43,6 +45,7 @@ import {
   bulkDeleteItems,
   bulkMoveItems,
   setColumnPermission,
+  setItemColumnName,
 } from "@/app/actions/board";
 
 // ── Bulk selection (shared across all groups of the board) ──
@@ -375,7 +378,7 @@ function GroupBlock({
               />
             )}
             <span className="h-full w-1.5 flex-none opacity-0" />
-            <span className="text-xs font-semibold text-muted">Item</span>
+            <ItemColumnLabel boardId={board.id} name={board.itemColumnName} readOnly={readOnly} />
           </div>
           {board.columns.map((c) => (
             <div key={c.id} style={{ width: COL_W }} className="border-l border-hair">
@@ -411,6 +414,63 @@ function GroupBlock({
   );
 }
 
+// Click-to-rename label for the built-in Item column (Improvement 3). Empty
+// input resets to the default "Item" — never blocks on an empty name since
+// the underlying field is optional (falls back to "Item" everywhere).
+function ItemColumnLabel({
+  boardId,
+  name,
+  readOnly,
+}: {
+  boardId: string;
+  name: string;
+  readOnly: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(name || "Item");
+  const [, start] = useTransition();
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onFocus={(e) => e.currentTarget.select()}
+        onBlur={() => {
+          setEditing(false);
+          const next = value.trim();
+          if (next !== (name || "Item")) start(() => void setItemColumnName(boardId, next === "Item" ? "" : next));
+          if (!next) setValue("Item");
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            setValue(name || "Item");
+            setEditing(false);
+          }
+        }}
+        maxLength={60}
+        className="w-full rounded border border-hair px-1 py-0.5 text-xs font-semibold text-ink outline-none focus:border-teal"
+      />
+    );
+  }
+
+  return (
+    <button
+      disabled={readOnly}
+      onClick={() => {
+        setValue(name || "Item");
+        setEditing(true);
+      }}
+      title={readOnly ? undefined : "Rename this column (e.g. Candidate Name)"}
+      className="truncate text-xs font-semibold text-muted hover:text-teal-deep disabled:hover:text-muted"
+    >
+      {name || "Item"}
+    </button>
+  );
+}
+
 function Row({
   board,
   group,
@@ -439,8 +499,11 @@ function Row({
   const sel = useSel();
   const tint = tintFor(board, item, colorBy);
   const isSel = sel?.selected.has(item.id) ?? false;
+  const hasSubitems = item.subitems.length > 0;
+  const [expanded, setExpanded] = useState(hasSubitems);
 
   return (
+    <>
     <div
       onDragOver={(e) => {
         if (readOnly) return;
@@ -491,6 +554,18 @@ function Row({
             ⠿
           </span>
         )}
+        {hasSubitems ? (
+          <button
+            onClick={() => setExpanded((e) => !e)}
+            className="grid h-4 w-4 flex-none place-items-center text-[10px] text-muted hover:text-teal"
+            title={expanded ? "Collapse subitems" : "Expand subitems"}
+            aria-label={expanded ? "Collapse subitems" : "Expand subitems"}
+          >
+            {expanded ? "▾" : "▸"}
+          </button>
+        ) : (
+          <span className="w-4 flex-none" />
+        )}
         <input
           value={name}
           disabled={readOnly}
@@ -499,6 +574,15 @@ function Row({
           onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
           className={`min-w-0 flex-1 bg-transparent px-2.5 text-sm font-medium text-ink outline-none focus:bg-teal/5 ${ROW_PAD[rowHeight]}`}
         />
+        {hasSubitems && (
+          <button
+            onClick={() => setExpanded((e) => !e)}
+            className="flex-none rounded-full bg-canvas px-1.5 py-0.5 text-[10px] font-semibold text-muted hover:text-teal"
+            title={`${item.subitems.length} subitem${item.subitems.length === 1 ? "" : "s"}`}
+          >
+            {item.subitems.length}
+          </button>
+        )}
         {/* Row actions — reserved space (no reflow) + solid bg so they never
             overlap the item name or spill into the next column. */}
         <div
@@ -542,6 +626,123 @@ function Row({
           />
         </div>
       ))}
+    </div>
+    {expanded && (
+      <>
+        {item.subitems.map((sub) => (
+          <SubitemRow
+            key={sub.id}
+            board={board}
+            group={group}
+            subitem={sub}
+            people={people}
+            readOnly={readOnly}
+            connectionOptions={connectionOptions}
+          />
+        ))}
+        {!readOnly && <AddSubitem boardId={board.id} parentId={item.id} />}
+      </>
+    )}
+    </>
+  );
+}
+
+// A subitem row: visually indented, same cell-editing machinery as a main
+// row, but no drag-reorder / group-move (subitems stay under their parent)
+// and its own expand toggle isn't needed (subitems don't nest further).
+function SubitemRow({
+  board,
+  group,
+  subitem,
+  people,
+  readOnly,
+  connectionOptions,
+}: {
+  board: BoardData;
+  group: GroupData;
+  subitem: SubitemData;
+  people: PersonLite[];
+  readOnly: boolean;
+  connectionOptions: ConnOpts;
+}) {
+  const [name, setName] = useState(subitem.name);
+  const [, start] = useTransition();
+  const { open } = useBoardUI();
+
+  return (
+    <div className="group flex items-stretch border-b border-hair bg-canvas/30 last:border-b-0">
+      <div className="flex items-center" style={{ width: NAME_W }}>
+        <span className="h-full w-1.5 flex-none opacity-40" style={{ background: group.color }} />
+        <span className="ml-3 flex-none text-muted/70" title="Subitem">↳</span>
+        <input
+          value={name}
+          disabled={readOnly}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={() => name !== subitem.name && start(() => void renameItem(board.id, subitem.id, name))}
+          onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+          className="min-w-0 flex-1 bg-transparent px-2 py-2 text-sm text-body outline-none focus:bg-teal/5"
+        />
+        <div className="flex flex-none items-center gap-0.5 pr-1.5 pl-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+          <button
+            onClick={() => open({ id: subitem.id, name: subitem.name })}
+            className="grid h-6 w-6 flex-none place-items-center rounded-md text-muted hover:bg-teal/10 hover:text-teal"
+            title="Open subitem"
+            aria-label="Open subitem"
+          >
+            ⤢
+          </button>
+          {!readOnly && (
+            <button
+              onClick={() => {
+                if (confirm(`Delete "${subitem.name}"? This can't be undone.`))
+                  start(() => void deleteItem(board.id, subitem.id));
+              }}
+              className="grid h-6 w-6 flex-none place-items-center rounded-md text-muted hover:bg-danger/10 hover:text-danger"
+              title="Delete subitem"
+              aria-label="Delete subitem"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+      {board.columns.map((c) => (
+        <div key={c.id} style={{ width: COL_W }} className="border-l border-hair">
+          <Cell
+            boardId={board.id}
+            itemId={subitem.id}
+            column={c}
+            cell={subitem.cells[c.id]}
+            people={people}
+            readOnly={readOnly || c.editable === false}
+            options={connectionOptions[c.id]}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AddSubitem({ boardId, parentId }: { boardId: string; parentId: string }) {
+  const [name, setName] = useState("");
+  const [, start] = useTransition();
+  function submit() {
+    if (!name.trim()) return;
+    start(() => void addSubitem(boardId, parentId, name));
+    setName("");
+  }
+  return (
+    <div className="flex items-center bg-canvas/30" style={{ width: NAME_W }}>
+      <span className="h-full w-1.5 flex-none opacity-0" />
+      <span className="ml-3 flex-none text-muted/40">↳</span>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && submit()}
+        onBlur={submit}
+        placeholder="+ Add subitem"
+        className="flex-1 bg-transparent px-2 py-2 text-sm text-body outline-none placeholder:text-muted focus:bg-teal/5"
+      />
     </div>
   );
 }

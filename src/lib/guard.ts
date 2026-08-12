@@ -1,4 +1,5 @@
 import "server-only";
+import { db } from "@/lib/db";
 import { getCurrentUser, type CurrentUser } from "@/lib/auth";
 import type { Permissions } from "@/lib/constants";
 
@@ -70,4 +71,34 @@ export async function requireAdmin(): Promise<CurrentUser> {
   if (!p.canManageUsers && !p.canManageEnvironments)
     throw new Error("Admin access required.");
   return user;
+}
+
+// Throws if the user cannot edit content (like requireEditor) OR the given
+// board isn't one they may access — org-scoped AND per-role board-restricted.
+// A client can never be trusted to only ever send boardIds the caller is
+// actually allowed to touch, so every board-scoped server action that
+// accepts a boardId argument should call this instead of requireEditor()
+// alone.
+export async function requireBoardEditor(boardId: string): Promise<CurrentUser> {
+  const user = await requireEditor();
+  await requireBoardAccess(user, boardId);
+  return user;
+}
+
+// Read-only counterpart of requireBoardEditor — signed in + board access,
+// but viewers (readOnly role) are allowed through.
+export async function requireBoardAccessAsUser(boardId: string): Promise<CurrentUser> {
+  const user = await requireUser();
+  await requireBoardAccess(user, boardId);
+  return user;
+}
+
+async function requireBoardAccess(user: CurrentUser, boardId: string): Promise<void> {
+  const board = await db.board.findUnique({
+    where: { id: boardId },
+    select: { environment: { select: { orgId: true } } },
+  });
+  if (!board || board.environment.orgId !== user.orgId) throw new Error("Board not found.");
+  const allowed = allowedBoardIds(user);
+  if (allowed && !allowed.includes(boardId)) throw new Error("Board not found.");
 }

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireEditor, canEditColumn } from "@/lib/guard";
+import { requireEditor, requireBoardEditor, requireBoardAccessAsUser, canEditColumn } from "@/lib/guard";
 import {
   DEFAULT_STATUS_LABELS,
   PALETTE,
@@ -10,6 +10,7 @@ import {
   type StatusLabel,
 } from "@/lib/constants";
 import { runAutomations } from "@/lib/automation";
+import { resolveOrCreateItem, type CellSeed } from "@/lib/subitems";
 
 function touch(boardId: string) {
   revalidatePath(`/boards/${boardId}`);
@@ -85,6 +86,59 @@ export async function deleteItem(boardId: string, itemId: string) {
   touch(boardId);
 }
 
+// ── Subitems (Feature 1) ────────────────────────────────────
+// Explicit "add subitem" from the item panel — lets a user deliberately
+// nest a record under a parent, independent of email auto-matching.
+export async function addSubitem(boardId: string, parentId: string, name: string) {
+  await requireBoardEditor(boardId);
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const parent = await db.item.findUnique({ where: { id: parentId }, select: { boardId: true, groupId: true } });
+  if (!parent || parent.boardId !== boardId) throw new Error("Parent item not found on this board.");
+  const count = await db.item.count({ where: { groupId: parent.groupId } });
+  const subitem = await db.item.create({
+    data: { boardId, groupId: parent.groupId, name: trimmed, position: count, parentId },
+  });
+  await runAutomations({ type: "item_created", boardId, itemId: subitem.id });
+  touch(boardId);
+}
+
+// Detach a subitem back into a normal main item (keeps its data/cells; it
+// just stops being nested under its parent).
+export async function promoteSubitem(boardId: string, itemId: string) {
+  await requireBoardEditor(boardId);
+  await db.item.updateMany({ where: { id: itemId, boardId }, data: { parentId: null } });
+  touch(boardId);
+}
+
+export type SubitemRow = { id: string; name: string };
+
+// Subitems of an item, for the item panel drawer (read access only). Scoped
+// through the parent item's board so a caller can't enumerate subitems of
+// an item on a board they don't have access to.
+export async function getItemSubitems(itemId: string): Promise<SubitemRow[]> {
+  const parent = await db.item.findUnique({ where: { id: itemId }, select: { boardId: true } });
+  if (!parent) return [];
+  await requireBoardAccessAsUser(parent.boardId);
+  const rows = await db.item.findMany({
+    where: { parentId: itemId },
+    orderBy: { position: "asc" },
+    select: { id: true, name: true },
+  });
+  return rows;
+}
+
+export type ParentItemRow = { id: string; name: string; boardId: string } | null;
+
+// If this item is itself a subitem, its parent — for the item panel drawer
+// to show "Subitem of X" with a link back.
+export async function getItemParent(itemId: string): Promise<ParentItemRow> {
+  const item = await db.item.findUnique({ where: { id: itemId }, select: { boardId: true, parent: { select: { id: true, name: true, boardId: true } } } });
+  if (!item) return null;
+  await requireBoardAccessAsUser(item.boardId);
+  return item.parent ?? null;
+}
+
 export async function moveItemToGroup(
   boardId: string,
   itemId: string,
@@ -102,6 +156,8 @@ export async function moveItemToGroup(
 
 // Import rows (from a CSV) into a group. `mapping[i]` says where CSV column i
 // goes: "__name__" (item name), a columnId, or "" to skip.
+// Rows whose mapped email matches an existing main item on the board become
+// subitems under that item instead of duplicate main items (Feature 1).
 export async function importItems(
   boardId: string,
   groupId: string,
@@ -109,27 +165,34 @@ export async function importItems(
   rows: string[][],
   mapping: string[]
 ) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   const nameIdx = mapping.findIndex((m) => m === "__name__");
-  let count = await db.item.count({ where: { groupId } });
   let created = 0;
+  let createdAsSubitems = 0;
   for (const row of rows) {
     const name = (nameIdx >= 0 ? row[nameIdx] : row[0])?.trim() || "Untitled";
-    const item = await db.item.create({
-      data: { boardId, groupId, name, position: count++ },
-    });
+    const cells: CellSeed[] = [];
     for (let i = 0; i < mapping.length; i++) {
       const target = mapping[i];
       if (!target || target === "__name__") continue;
       const value = (row[i] ?? "").trim();
       if (!value) continue;
-      await db.cell.create({ data: { itemId: item.id, columnId: target, value } });
+      cells.push({ columnId: target, value });
+    }
+    const result = await resolveOrCreateItem(boardId, groupId, name, cells);
+    if (result.createdAsSubitem) createdAsSubitems++;
+    // Automations must never block the import — log and continue on error,
+    // matching the public-form submission path (see form.ts).
+    try {
+      await runAutomations({ type: "item_created", boardId, itemId: result.id });
+    } catch (e) {
+      console.error("[import:automation-error]", e);
     }
     created++;
   }
   void header;
   touch(boardId);
-  return created;
+  return { created, createdAsSubitems };
 }
 
 // Bulk actions on many selected items at once (Part: bulk selection).
@@ -573,6 +636,17 @@ export async function renameBoard(boardId: string, name: string) {
   await db.board.update({ where: { id: boardId }, data: { name: name.trim() } });
   touch(boardId);
   revalidatePath("/", "layout");
+}
+
+// Rename the built-in Item column's DISPLAY label (Improvement 3) — e.g.
+// "Candidate Name". Presentation only: item ids, cells, automations, and
+// APIs are all keyed off Item.id/Cell.itemId, none of which this touches.
+// An empty/whitespace-only name resets to the default "Item" label.
+export async function setItemColumnName(boardId: string, name: string) {
+  await requireBoardEditor(boardId);
+  const trimmed = name.trim().slice(0, 60);
+  await db.board.update({ where: { id: boardId }, data: { itemColumnName: trimmed } });
+  touch(boardId);
 }
 
 // Soft-delete → moves to Archive/Trash (restorable).

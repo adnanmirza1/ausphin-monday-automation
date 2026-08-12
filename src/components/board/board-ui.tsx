@@ -29,7 +29,16 @@ import {
   type ItemTag,
 } from "@/app/actions/employers";
 import { getItemInbox, logItemEmail, type EmailRow } from "@/app/actions/email";
-import { renameItem } from "@/app/actions/board";
+import {
+  renameItem,
+  addSubitem,
+  deleteItem,
+  promoteSubitem,
+  getItemSubitems,
+  getItemParent,
+  type SubitemRow,
+  type ParentItemRow,
+} from "@/app/actions/board";
 import { EmailComposer } from "@/components/board/email-composer";
 import { TAG_STAGES, TAG_STAGE_META, type TagStage } from "@/lib/constants";
 
@@ -60,12 +69,14 @@ export function useBoardUI() {
 
 export function BoardUIProvider({
   boardId,
+  itemColumnName,
   departments,
   templates,
   employers,
   children,
 }: {
   boardId: string;
+  itemColumnName?: string;
   departments: Dept[];
   templates: TemplateLite[];
   employers: EmployerLite[];
@@ -80,6 +91,7 @@ export function BoardUIProvider({
         <ItemPanel
           key={selected.id}
           boardId={boardId}
+          itemColumnName={itemColumnName || "Item"}
           item={selected}
           departments={departments}
           templates={templates}
@@ -106,6 +118,7 @@ function timeAgo(iso: string) {
 
 function ItemPanel({
   boardId,
+  itemColumnName = "Item",
   item,
   departments,
   templates,
@@ -113,6 +126,7 @@ function ItemPanel({
   onClose,
 }: {
   boardId: string;
+  itemColumnName?: string;
   item: { id: string; name: string };
   departments: Dept[];
   templates: TemplateLite[];
@@ -137,7 +151,33 @@ function ItemPanel({
   const [itemName, setItemName] = useState(item.name);
   const [composing, setComposing] = useState(false);
   const [logging, setLogging] = useState(false);
+  const [subitems, setSubitems] = useState<SubitemRow[] | null>(null);
+  const [parentItem, setParentItem] = useState<ParentItemRow>(null);
+  const [newSubitem, setNewSubitem] = useState("");
   const [, start] = useTransition();
+  const { open } = useBoardUI();
+
+  function refreshSubitems() {
+    getItemSubitems(item.id).then(setSubitems);
+  }
+
+  function addSub() {
+    const name = newSubitem.trim();
+    if (!name) return;
+    setNewSubitem("");
+    start(async () => {
+      await addSubitem(boardId, item.id, name);
+      refreshSubitems();
+    });
+  }
+
+  function removeSub(subId: string, subName: string) {
+    if (!confirm(`Delete "${subName}"? This can't be undone.`)) return;
+    start(async () => {
+      await deleteItem(boardId, subId);
+      refreshSubitems();
+    });
+  }
 
   function refreshEmails() {
     getItemInbox(item.id).then((r) => {
@@ -164,6 +204,8 @@ function ItemPanel({
     getItemDocs(item.id).then(setDocs);
     getItemEnvelopes(item.id).then(setEnvelopes).catch(() => setEnvelopes([]));
     getItemTags(item.id).then(setTags);
+    getItemSubitems(item.id).then(setSubitems);
+    getItemParent(item.id).then(setParentItem);
     getItemInbox(item.id).then((r) => {
       setEmails(r.emails);
       setEmailTo(r.to);
@@ -216,7 +258,9 @@ function ItemPanel({
         {/* header */}
         <div className="flex items-center justify-between border-b border-hair px-5 py-4">
           <div className="min-w-0 flex-1">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Item</p>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-muted">
+              {itemColumnName}
+            </p>
             <input
               value={itemName}
               onChange={(e) => setItemName(e.target.value)}
@@ -241,6 +285,89 @@ function ItemPanel({
 
         {/* body */}
         <div className="flex-1 overflow-y-auto scroll-thin p-5">
+          {/* parent banner — this item is itself a subitem */}
+          {parentItem && (
+            <div className="mb-5 flex items-center justify-between rounded-lg border border-hair bg-canvas/50 px-3 py-2">
+              <span className="text-xs text-muted">
+                ↳ Subitem of{" "}
+                <span className="font-semibold text-ink">{parentItem.name}</span>
+                {parentItem.boardId !== boardId && " (another board)"}
+              </span>
+              <button
+                onClick={() =>
+                  start(async () => {
+                    await promoteSubitem(boardId, item.id);
+                    setParentItem(null);
+                  })
+                }
+                className="flex-none text-xs font-medium text-teal hover:underline"
+                title="Detach from parent — keeps this item's data, makes it a normal item"
+              >
+                Detach
+              </button>
+            </div>
+          )}
+
+          {/* subitems */}
+          <div className="mb-5">
+            <h3 className="mb-2 text-sm font-bold text-ink">
+              Subitems{subitems && subitems.length > 0 ? ` (${subitems.length})` : ""}
+            </h3>
+            {subitems === null && <p className="text-xs text-muted">Loading…</p>}
+            {subitems?.length === 0 && (
+              <p className="mb-2 text-xs text-muted">
+                No subitems yet. Records with a matching email are grouped here automatically —
+                or add one below.
+              </p>
+            )}
+            {subitems && subitems.length > 0 && (
+              <div className="mb-2 flex flex-col gap-1.5">
+                {subitems.map((s) => (
+                  <div
+                    key={s.id}
+                    className="flex items-center justify-between rounded-lg border border-hair px-3 py-1.5"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-sm text-ink">↳ {s.name}</span>
+                    <div className="flex flex-none items-center gap-2">
+                      <button
+                        onClick={() => open({ id: s.id, name: s.name })}
+                        className="text-xs text-muted hover:text-teal"
+                        title="Open subitem"
+                      >
+                        open ↗
+                      </button>
+                      <button
+                        onClick={() => removeSub(s.id, s.name)}
+                        className="text-xs text-muted hover:text-danger"
+                        title="Delete subitem"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <input
+                value={newSubitem}
+                onChange={(e) => setNewSubitem(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addSub()}
+                placeholder="+ Add subitem"
+                className="flex-1 rounded-lg border border-hair px-2.5 py-1.5 text-sm outline-none focus:border-teal"
+              />
+              <button
+                onClick={addSub}
+                disabled={!newSubitem.trim()}
+                className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-3 border-t border-hair" />
+
           {/* employer tagging */}
           <div className="mb-5">
             <h3 className="mb-2 text-sm font-bold text-ink">Employer</h3>

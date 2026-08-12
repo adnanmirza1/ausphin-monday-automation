@@ -5,6 +5,7 @@ import type { StatusLabel } from "@/lib/constants";
 import { urlDisplay, parseFileValue, type FileValue } from "@/lib/cell-values";
 import { putFile, fetchFileBuffer } from "@/lib/blob-storage";
 import { fillDocx, DOCX_MIME } from "@/lib/docx-fill";
+import { resolveColumnBySlug, slugifyColumnName, ITEM_NAME_SLUG } from "@/lib/placeholders";
 
 function safeName(s: string): string {
   return s.replace(/[^\w.-]+/g, "_").replace(/_+/g, "_").slice(0, 80) || "document";
@@ -143,7 +144,19 @@ export async function generateDocumentCore(
         continue;
       }
       const mapped = mapping[p];
-      data[p] = mapped ? textOf(mapped) : textOf(p); // else auto-fill same-named column
+      if (mapped) {
+        data[p] = textOf(mapped);
+      } else if (textOf(p)) {
+        data[p] = textOf(p); // exact same-named column
+      } else if (slugifyColumnName(p) === ITEM_NAME_SLUG) {
+        data[p] = item.name; // the deterministic {{item}} placeholder (Improvement 2)
+      } else {
+        // Deterministic slug fallback (Improvement 2): guarantees every
+        // placeholder shown in the placeholder reference UI resolves here,
+        // even without an explicit mapping entry.
+        const col = resolveColumnBySlug(p, item.board.columns);
+        data[p] = col ? textOf(col.name) : "";
+      }
     }
     let outBuf: Buffer;
     try {

@@ -8,10 +8,12 @@ export type TemplateLite = { id: string; name: string; body: string };
 
 export function DocsButton({
   boardId,
+  itemColumnName = "Item",
   templates,
   columns,
 }: {
   boardId: string;
+  itemColumnName?: string;
   templates: TemplateLite[];
   columns: ColumnData[];
 }) {
@@ -21,6 +23,9 @@ export function DocsButton({
   const [body, setBody] = useState("");
   const [, start] = useTransition();
 
+  // The stored token is always {{Item}} (matches renderTemplate's lookup,
+  // and stays stable across renames per Improvement 3, req #5) — only the
+  // tooltip reflects the board's custom label for this column.
   const placeholders = ["Item", ...columns.map((c) => c.name)];
 
   function startNew() {
@@ -60,7 +65,7 @@ export function DocsButton({
               <div>
                 <h2 className="text-lg font-bold text-ink">Document templates</h2>
                 <p className="text-sm text-muted">
-                  Use {"{{Placeholders}}"} that fill from each item's data.
+                  Use {"{{Placeholders}}"} that fill from each item&rsquo;s data.
                 </p>
               </div>
               <button onClick={() => setOpen(false)} className="text-muted hover:text-ink">✕</button>
@@ -118,6 +123,7 @@ export function DocsButton({
                     <button
                       key={p}
                       onClick={() => insert(p)}
+                      title={p === "Item" ? itemColumnName : undefined}
                       className="rounded-full border border-hair px-2 py-0.5 font-mono text-[11px] text-teal-deep hover:border-teal"
                     >
                       {"{{"}{p}{"}}"}

@@ -39,11 +39,12 @@ export default async function BoardPage({
   };
   const colById = new Map(board.columns.map((c) => [c.id, c]));
 
-  // Collect linked item ids from connection cells so we can fetch them in-wave.
+  // Collect linked item ids from connection cells so we can fetch them in-wave
+  // (subitems can carry connection-column values too).
   const linkedIds = new Set<string>();
   for (const g of board.groups)
     for (const it of g.items)
-      for (const cell of it.cells)
+      for (const cell of [...it.cells, ...it.subitems.flatMap((s) => s.cells)])
         if (colById.get(cell.columnId)?.type === "connection" && cell.value)
           linkedIds.add(cell.value);
 
@@ -178,6 +179,44 @@ export default async function BoardPage({
     return v;
   }
 
+  // Shared cell-mapping for both main items and subitems: resolves
+  // connection display labels + injects synthetic mirror-column cells.
+  type RawCell = {
+    columnId: string;
+    value: string | null;
+    personId: string | null;
+    person: { id: string; name: string; email: string; avatarColor: string } | null;
+  };
+  function buildCells(rawCells: RawCell[]): BoardData["groups"][number]["items"][number]["cells"] {
+    const cells: BoardData["groups"][number]["items"][number]["cells"] = {};
+    for (const cell of rawCells) {
+      const col = colById.get(cell.columnId);
+      cells[cell.columnId] = {
+        value: cell.value,
+        personId: cell.personId,
+        person: cell.person
+          ? {
+              id: cell.person.id,
+              name: cell.person.name,
+              email: cell.person.email,
+              avatarColor: cell.person.avatarColor,
+            }
+          : null,
+        display:
+          col?.type === "connection" && cell.value
+            ? linkedMap.get(cell.value)?.name ?? ""
+            : undefined,
+      };
+    }
+    for (const mc of columns.filter((c) => c.type === "mirror")) {
+      const connCell = mc.connectionColumnId ? cells[mc.connectionColumnId] : undefined;
+      const linkedId = connCell?.value ?? null;
+      const display = linkedId && mc.sourceColumnId ? resolveSource(linkedId, mc.sourceColumnId) : "";
+      cells[mc.id] = { value: null, personId: null, person: null, display };
+    }
+    return cells;
+  }
+
   // Options for connection pickers + boards/columns for the add-column UI
   // (both fetched in the Promise.all wave above).
   const connectionOptions: Record<string, { id: string; name: string }[]> =
@@ -201,6 +240,7 @@ export default async function BoardPage({
     name: board.name,
     description: board.description,
     environmentName: board.environment.name,
+    itemColumnName: board.itemColumnName,
     form: {
       enabled: board.formEnabled,
       title: board.formTitle,
@@ -240,37 +280,16 @@ export default async function BoardPage({
       id: g.id,
       name: g.name,
       color: g.color,
-      items: g.items.map((it) => {
-        const cells: BoardData["groups"][number]["items"][number]["cells"] = {};
-        for (const cell of it.cells) {
-          const col = colById.get(cell.columnId);
-          cells[cell.columnId] = {
-            value: cell.value,
-            personId: cell.personId,
-            person: cell.person
-              ? {
-                  id: cell.person.id,
-                  name: cell.person.name,
-                  email: cell.person.email,
-                  avatarColor: cell.person.avatarColor,
-                }
-              : null,
-            display:
-              col?.type === "connection" && cell.value
-                ? linkedMap.get(cell.value)?.name ?? ""
-                : undefined,
-          };
-        }
-        // Inject synthetic cells for mirror columns (resolved via connection).
-        for (const mc of columns.filter((c) => c.type === "mirror")) {
-          const connCell = mc.connectionColumnId ? cells[mc.connectionColumnId] : undefined;
-          const linkedId = connCell?.value ?? null;
-          const display =
-            linkedId && mc.sourceColumnId ? resolveSource(linkedId, mc.sourceColumnId) : "";
-          cells[mc.id] = { value: null, personId: null, person: null, display };
-        }
-        return { id: it.id, name: it.name, cells };
-      }),
+      items: g.items.map((it) => ({
+        id: it.id,
+        name: it.name,
+        cells: buildCells(it.cells),
+        subitems: it.subitems.map((sub) => ({
+          id: sub.id,
+          name: sub.name,
+          cells: buildCells(sub.cells),
+        })),
+      })),
     })),
   };
 

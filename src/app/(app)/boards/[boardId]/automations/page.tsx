@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { allowedBoardIds } from "@/lib/guard";
 import type { StatusLabel } from "@/lib/constants";
 import { AutomationsPanel } from "@/components/automation/automations-panel";
 
@@ -24,6 +25,11 @@ export default async function AutomationsPage({
   });
   if (!board || board.environment.orgId !== user.orgId) notFound();
 
+  // Per-role board access enforcement — matches the board page's check
+  // (src/app/(app)/boards/[boardId]/page.tsx), previously missing here.
+  const allowed = allowedBoardIds(user);
+  if (allowed && !allowed.includes(boardId)) notFound();
+
   const departments = await db.department.findMany({
     where: { orgId: user.orgId },
     orderBy: { name: "asc" },
@@ -34,11 +40,27 @@ export default async function AutomationsPage({
     orderBy: [{ name: "asc" }],
     select: { id: true, name: true, reference: true, viewName: true, employer: true, active: true },
   });
-  const boards = await db.board.findMany({
-    where: { environment: { orgId: user.orgId }, archivedAt: null },
+  // Destination-board picker for "create item/subitem on another board"
+  // actions (Automations 1 & 3) — restricted to boards this user may access,
+  // with full column lists so the field-mapping UI can be built dynamically
+  // (never hardcoded), mirroring boardColumnsMap in boards/[boardId]/page.tsx.
+  const boardsRaw = await db.board.findMany({
+    where: {
+      environment: { orgId: user.orgId },
+      archivedAt: null,
+      ...(allowed ? { id: { in: allowed } } : {}),
+    },
     orderBy: { name: "asc" },
-    select: { id: true, name: true },
+    select: {
+      id: true,
+      name: true,
+      columns: { select: { id: true, name: true, type: true }, orderBy: { position: "asc" } },
+    },
   });
+  const boards = boardsRaw.map((b) => ({ id: b.id, name: b.name }));
+  const boardColumnsMap: Record<string, { id: string; name: string; type: string }[]> = Object.fromEntries(
+    boardsRaw.map((b) => [b.id, b.columns])
+  );
 
   const columns = board.columns.map((c) => {
     let labels: StatusLabel[] = [];
@@ -54,12 +76,14 @@ export default async function AutomationsPage({
     <AutomationsPanel
       boardId={board.id}
       boardName={board.name}
+      itemColumnName={board.itemColumnName || "Item"}
       environmentName={board.environment.name}
       columns={columns}
       groups={board.groups.map((g) => ({ id: g.id, name: g.name, color: g.color }))}
       departments={departments}
       templates={templates}
       boards={boards}
+      boardColumnsMap={boardColumnsMap}
       automations={board.automations.map((a) => ({
         id: a.id,
         name: a.name,

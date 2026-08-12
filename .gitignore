@@ -48,3 +48,6 @@ next-env.d.ts
 *.db-journal
 *.db-wal
 dev.db
+
+# scratch test scripts (verification only, not part of the app)
+/.scratch-tests
