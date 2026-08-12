@@ -3,10 +3,17 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireEditor, requireUser, requireBoardEditor, requireBoardAccessAsUser } from "@/lib/guard";
-import { generateDocumentCore } from "@/lib/generate-doc";
+import {
+  generateDocumentCore,
+  generateDocumentCoreDetailed,
+  renderTemplatePreview,
+  type GenerateResult,
+  type PreviewResult,
+} from "@/lib/generate-doc";
 import { putFile, deleteFile } from "@/lib/blob-storage";
 import { extractPlaceholders } from "@/lib/docx-fill";
 import { buildPlaceholderList, resolveColumnBySlug, type PlaceholderRow } from "@/lib/placeholders";
+import { cloudconvertConfigured } from "@/lib/cloudconvert";
 
 // ── Templates ─────────────────────────────────────────────────
 export async function createTemplate(boardId: string, name: string, body: string) {
@@ -122,6 +129,20 @@ export async function getDocuGenData(boardId: string): Promise<DocuGenData> {
     columns,
     fileColumns: columns.filter((c) => c.type === "file"),
   };
+}
+
+export type BoardItemLite = { id: string; name: string };
+
+// Lightweight item list for the template preview picker — "preview this
+// template using data from item X." Fetched on demand (not part of
+// getDocuGenData) so large boards don't pay for it unless Preview is opened.
+export async function getBoardItemsLite(boardId: string): Promise<BoardItemLite[]> {
+  await requireBoardAccessAsUser(boardId);
+  return db.item.findMany({
+    where: { boardId },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
 }
 
 // Dynamic placeholder reference (Improvement 2) — Board Column | Placeholder
@@ -319,6 +340,47 @@ export async function generateDocument(
   const id = await generateDocumentCore(itemId, templateId);
   revalidatePath(`/boards/${boardId}`);
   return id;
+}
+
+// Richer variant surfacing conversion errors (e.g. PDF not configured or
+// CloudConvert failed) to the UI instead of a bare null.
+export async function generateDocumentDetailed(
+  boardId: string,
+  itemId: string,
+  templateId: string
+): Promise<GenerateResult> {
+  await requireBoardEditor(boardId);
+  const result = await generateDocumentCoreDetailed(itemId, templateId);
+  revalidatePath(`/boards/${boardId}`);
+  return result;
+}
+
+// Whether visual preview / real PDF conversion is available at all — lets
+// the UI show a clear "not configured" state instead of a confusing error
+// only after the user clicks Preview.
+export async function docuGenConversionAvailable(): Promise<boolean> {
+  await requireUser();
+  return cloudconvertConfigured();
+}
+
+// Visual preview (Improvement 1/2 follow-up from the client walkthrough):
+// render a filled .docx template as a real PDF for a chosen item, without
+// creating a GeneratedDocument row. Read access only (viewers can preview),
+// but still board-scoped so a caller can't preview a template/item pair
+// from a board they don't have access to.
+export async function previewTemplate(
+  boardId: string,
+  itemId: string,
+  templateId: string
+): Promise<PreviewResult> {
+  await requireBoardAccessAsUser(boardId);
+  const [template, item] = await Promise.all([
+    db.docTemplate.findFirst({ where: { id: templateId, boardId }, select: { id: true } }),
+    db.item.findFirst({ where: { id: itemId, boardId }, select: { id: true } }),
+  ]);
+  if (!template) return { ok: false, error: "Template not found on this board." };
+  if (!item) return { ok: false, error: "Item not found on this board." };
+  return renderTemplatePreview(itemId, templateId);
 }
 
 export async function deleteDocument(boardId: string, id: string) {

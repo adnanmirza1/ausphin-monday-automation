@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "@/lib/db";
-import { generateDocumentCore } from "@/lib/generate-doc";
+import { generateDocumentCoreDetailed } from "@/lib/generate-doc";
 import { sendMail, mailerConfigured } from "@/lib/mailer";
 import { urlDisplay, parseFileValue } from "@/lib/cell-values";
 import { normalizeEmail, findMatchingParent, createSubitem, getEmailColumn } from "@/lib/subitems";
@@ -357,7 +357,8 @@ async function execute(action: Action, event: AutomationEvent) {
     }
 
     case "generate_document": {
-      await generateDocumentCore(itemId, action.templateId);
+      const result = await generateDocumentCoreDetailed(itemId, action.templateId);
+      if (!result.ok) await logAutomation(itemId, `⚡ Generate document: skipped — ${result.error}`);
       break;
     }
 

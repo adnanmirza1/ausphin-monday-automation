@@ -6,6 +6,10 @@ import { urlDisplay, parseFileValue, type FileValue } from "@/lib/cell-values";
 import { putFile, fetchFileBuffer } from "@/lib/blob-storage";
 import { fillDocx, DOCX_MIME } from "@/lib/docx-fill";
 import { resolveColumnBySlug, slugifyColumnName, ITEM_NAME_SLUG } from "@/lib/placeholders";
+import { convertDocxToPdf, cloudconvertConfigured } from "@/lib/cloudconvert";
+import type { Prisma } from "@/generated/prisma/client";
+
+export const PDF_MIME = "application/pdf";
 
 function safeName(s: string): string {
   return s.replace(/[^\w.-]+/g, "_").replace(/_+/g, "_").slice(0, 80) || "document";
@@ -26,26 +30,15 @@ async function appendToFileColumn(itemId: string, columnId: string, file: FileVa
   });
 }
 
-// Core document generation (no auth) — used by the manual action and by
-// automations. Fills a template from an item's data (resolving status labels,
-// people, signatures, connections, and mirrors), saves a GeneratedDocument,
-// and attaches its link to the board's first file column ("output").
-export async function generateDocumentCore(
-  itemId: string,
-  templateId: string
-): Promise<string | null> {
-  const [item, template] = await Promise.all([
-    db.item.findUnique({
-      where: { id: itemId },
-      include: {
-        cells: { include: { column: true, person: true } },
-        board: { include: { columns: true } },
-      },
-    }),
-    db.docTemplate.findUnique({ where: { id: templateId } }),
-  ]);
-  if (!item || !template) return null;
+type ItemWithCells = Prisma.ItemGetPayload<{
+  include: { cells: { include: { column: true; person: true } }; board: { include: { columns: true } } };
+}>;
 
+// Resolve an item's cells into a { columnName -> DocValue } map (status
+// labels, person names, signatures, connections, and mirrors all resolved).
+// Shared by both real generation and template previews so they can never
+// drift from each other.
+async function resolveItemValues(item: ItemWithCells): Promise<Record<string, DocValue>> {
   const connCellVals = item.cells
     .filter((c) => c.column.type === "connection" && c.value)
     .map((c) => c.value!) as string[];
@@ -116,6 +109,79 @@ export async function generateDocumentCore(
         ? { text: resolveSource(connCell.value, sourceColumnId) }
         : { text: "" };
   }
+  return values;
+}
+
+// Build the flat { placeholder -> filled text } map docxtemplater needs,
+// given a docx template's detected placeholders/mapping and an item's
+// resolved values. Shared by real generation and previews — the SAME
+// resolution order (explicit mapping -> exact column name -> {{item}} ->
+// deterministic slug fallback) that the placeholder reference UI guarantees
+// (see placeholders.ts / Improvement 2).
+function buildDocxFillData(
+  itemName: string,
+  boardColumns: { id: string; name: string; type: string }[],
+  placeholders: string[],
+  mapping: Record<string, string>,
+  values: Record<string, DocValue>
+): Record<string, string> {
+  const textOf = (colName: string): string => {
+    if (!colName) return "";
+    if (colName === "Item" || colName === "{{Item}}") return itemName;
+    const v = values[colName];
+    return v && "text" in v ? v.text ?? "" : "";
+  };
+  // Signature anchors ({{Signature_1}}, {{Signer_Name_1}}, {{Signed_Date_1}},
+  // {{Initial_1}}, {{Date_Signed_1}}) are NOT data — keep them literal so
+  // DocuSign can convert them to signature fields later.
+  const isSignatureAnchor = (p: string) => /^(signature|signer_name|signed_date|date_signed|initial)_?\d*$/i.test(p);
+  const data: Record<string, string> = {};
+  for (const p of placeholders) {
+    if (isSignatureAnchor(p)) {
+      data[p] = `{{${p}}}`; // echo back so the anchor text survives filling
+      continue;
+    }
+    const mapped = mapping[p];
+    if (mapped) {
+      data[p] = textOf(mapped);
+    } else if (textOf(p)) {
+      data[p] = textOf(p); // exact same-named column
+    } else if (slugifyColumnName(p) === ITEM_NAME_SLUG) {
+      data[p] = itemName; // the deterministic {{item}} placeholder (Improvement 2)
+    } else {
+      // Deterministic slug fallback (Improvement 2): guarantees every
+      // placeholder shown in the placeholder reference UI resolves here,
+      // even without an explicit mapping entry.
+      const col = resolveColumnBySlug(p, boardColumns);
+      data[p] = col ? textOf(col.name) : "";
+    }
+  }
+  return data;
+}
+
+export type GenerateResult = { ok: true; id: string } | { ok: false; error: string };
+
+// Core document generation (no auth) — used by the manual action and by
+// automations. Fills a template from an item's data (resolving status labels,
+// people, signatures, connections, and mirrors), saves a GeneratedDocument,
+// and attaches its link to the board's first file column ("output").
+export async function generateDocumentCoreDetailed(
+  itemId: string,
+  templateId: string
+): Promise<GenerateResult> {
+  const [item, template] = await Promise.all([
+    db.item.findUnique({
+      where: { id: itemId },
+      include: {
+        cells: { include: { column: true, person: true } },
+        board: { include: { columns: true } },
+      },
+    }),
+    db.docTemplate.findUnique({ where: { id: templateId } }),
+  ]);
+  if (!item || !template) return { ok: false, error: "Item or template not found." };
+
+  const values = await resolveItemValues(item);
 
   // ── DocuGen .docx path: fill the uploaded .docx and save to a file column ──
   if (template.kind === "docx" && template.docxUrl) {
@@ -127,61 +193,56 @@ export async function generateDocumentCore(
     try {
       mapping = JSON.parse(template.mapping);
     } catch {}
-    const textOf = (colName: string): string => {
-      if (!colName) return "";
-      if (colName === "Item" || colName === "{{Item}}") return item.name;
-      const v = values[colName];
-      return v && "text" in v ? v.text ?? "" : "";
-    };
-    // Signature anchors ({{Signature_1}}, {{Signer_Name_1}}, {{Signed_Date_1}},
-    // {{Initial_1}}, {{Date_Signed_1}}) are NOT data — keep them literal so
-    // DocuSign can convert them to signature fields later (section 7).
-    const isSignatureAnchor = (p: string) => /^(signature|signer_name|signed_date|date_signed|initial)_?\d*$/i.test(p);
-    const data: Record<string, string> = {};
-    for (const p of placeholders) {
-      if (isSignatureAnchor(p)) {
-        data[p] = `{{${p}}}`; // echo back so the anchor text survives filling
-        continue;
-      }
-      const mapped = mapping[p];
-      if (mapped) {
-        data[p] = textOf(mapped);
-      } else if (textOf(p)) {
-        data[p] = textOf(p); // exact same-named column
-      } else if (slugifyColumnName(p) === ITEM_NAME_SLUG) {
-        data[p] = item.name; // the deterministic {{item}} placeholder (Improvement 2)
-      } else {
-        // Deterministic slug fallback (Improvement 2): guarantees every
-        // placeholder shown in the placeholder reference UI resolves here,
-        // even without an explicit mapping entry.
-        const col = resolveColumnBySlug(p, item.board.columns);
-        data[p] = col ? textOf(col.name) : "";
-      }
-    }
+    const data = buildDocxFillData(item.name, item.board.columns, placeholders, mapping, values);
+
     let outBuf: Buffer;
     try {
       const tplBuf = await fetchFileBuffer(template.docxUrl);
       outBuf = fillDocx(tplBuf, data);
     } catch (e) {
       console.error("[docgen:docx]", e);
-      return null;
+      return { ok: false, error: "Could not fill the .docx template — it may be corrupted or use unsupported formatting." };
     }
-    const fileName = `${safeName(template.name)}-${safeName(item.name)}.docx`;
-    const url = await putFile(`docs/${itemId}/${Date.now()}-${fileName}`, outBuf, DOCX_MIME);
+
+    // Real PDF conversion (via CloudConvert — pdf-lib can't parse an actual
+    // .docx's formatting, only draw a new PDF from scratch). Falls back to
+    // DOCX with a clear error surfaced to the caller when PDF isn't
+    // configured or the conversion fails, rather than silently mislabeling
+    // a .docx file as the requested PDF.
+    let finalBuf: Buffer = outBuf;
+    let finalMime = DOCX_MIME;
+    let finalExt = "docx";
+    let conversionError: string | undefined;
+    if (template.outputFormat === "pdf") {
+      if (!cloudconvertConfigured()) {
+        conversionError = "PDF conversion isn't configured yet — saved as DOCX instead.";
+      } else {
+        try {
+          finalBuf = await convertDocxToPdf(outBuf, `${safeName(template.name)}.docx`);
+          finalMime = PDF_MIME;
+          finalExt = "pdf";
+        } catch (e) {
+          conversionError = e instanceof Error ? e.message : "PDF conversion failed — saved as DOCX instead.";
+        }
+      }
+    }
+
+    const fileName = `${safeName(template.name)}-${safeName(item.name)}.${finalExt}`;
+    const url = await putFile(`docs/${itemId}/${Date.now()}-${fileName}`, finalBuf, finalMime);
     const doc = await db.generatedDocument.create({
       data: {
         itemId,
         templateId,
         name: `${template.name} — ${item.name}`,
         html: "",
-        content: JSON.stringify({ fileUrl: url, fileName, format: "docx" }),
+        content: JSON.stringify({ fileUrl: url, fileName, format: finalExt, conversionError }),
       },
     });
     const outCol = template.outputColumnId
       ? item.board.columns.find((c) => c.id === template.outputColumnId && c.type === "file")
       : item.board.columns.find((c) => c.type === "file");
-    if (outCol) await appendToFileColumn(itemId, outCol.id, { name: fileName, type: DOCX_MIME, url });
-    return doc.id;
+    if (outCol) await appendToFileColumn(itemId, outCol.id, { name: fileName, type: finalMime, url });
+    return { ok: true, id: doc.id };
   }
 
   const title = `${template.name} — ${item.name}`;
@@ -201,5 +262,70 @@ export async function generateDocumentCore(
     });
   }
 
-  return doc.id;
+  return { ok: true, id: doc.id };
+}
+
+// Backward-compatible simple wrapper — used by the automation engine, which
+// only needs the id (or null on failure) and already logs its own
+// success/error messages to the item timeline.
+export async function generateDocumentCore(itemId: string, templateId: string): Promise<string | null> {
+  const result = await generateDocumentCoreDetailed(itemId, templateId);
+  return result.ok ? result.id : null;
+}
+
+export type PreviewResult = { ok: true; dataUrl: string; format: "pdf" | "docx" } | { ok: false; error: string };
+
+// Visual preview (Improvement request): fill a docx template with a real
+// item's data and render it as a PDF the user can view inline, WITHOUT
+// creating a GeneratedDocument row or writing to any file column — this is
+// a look-before-you-generate preview, not a real generation. Uses the exact
+// same fill logic as generateDocumentCoreDetailed (via the shared helpers
+// above) so the preview is guaranteed to match what "Generate" would
+// actually produce.
+export async function renderTemplatePreview(itemId: string, templateId: string): Promise<PreviewResult> {
+  const [item, template] = await Promise.all([
+    db.item.findUnique({
+      where: { id: itemId },
+      include: {
+        cells: { include: { column: true, person: true } },
+        board: { include: { columns: true } },
+      },
+    }),
+    db.docTemplate.findUnique({ where: { id: templateId } }),
+  ]);
+  if (!item || !template) return { ok: false, error: "Item or template not found." };
+  if (template.kind !== "docx" || !template.docxUrl) {
+    return { ok: false, error: "Preview is only available for .docx templates." };
+  }
+
+  const values = await resolveItemValues(item);
+  let placeholders: string[] = [];
+  let mapping: Record<string, string> = {};
+  try {
+    placeholders = JSON.parse(template.placeholders);
+  } catch {}
+  try {
+    mapping = JSON.parse(template.mapping);
+  } catch {}
+  const data = buildDocxFillData(item.name, item.board.columns, placeholders, mapping, values);
+
+  let filledBuf: Buffer;
+  try {
+    const tplBuf = await fetchFileBuffer(template.docxUrl);
+    filledBuf = fillDocx(tplBuf, data);
+  } catch (e) {
+    console.error("[docgen:preview:fill]", e);
+    return { ok: false, error: "Could not fill the .docx template for preview — it may be corrupted or use unsupported formatting." };
+  }
+
+  if (!cloudconvertConfigured()) {
+    return { ok: false, error: "Visual preview isn't configured yet — add a PDF conversion API key to enable it." };
+  }
+  try {
+    const pdfBuf = await convertDocxToPdf(filledBuf, `${safeName(template.name)}.docx`);
+    return { ok: true, dataUrl: `data:${PDF_MIME};base64,${pdfBuf.toString("base64")}`, format: "pdf" };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Preview conversion failed.";
+    return { ok: false, error: message };
+  }
 }

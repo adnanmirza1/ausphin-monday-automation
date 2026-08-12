@@ -45,6 +45,12 @@ git push origin main
    `STRIPE_SECRET_KEY_GLOBAL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`,
    `SMTP_FROM`, `DOCUSIGN_INTEGRATION_KEY`, `DOCUSIGN_ACCOUNT_ID`, `DOCUSIGN_SECRET`.
 
+   `CLOUDCONVERT_API_KEY` — enables DocuGen's real PDF output and the
+   visual template preview (converts filled .docx templates to PDF via
+   CloudConvert's API). Get a free key at cloudconvert.com → Dashboard →
+   API Keys. Without it, PDF output safely falls back to DOCX and Preview
+   shows a clear "not configured" message — nothing breaks either way.
+
 3. **Deploy.** Build command is `prisma generate && next build` (already set).
 4. Open the deployed URL and sign in.
 

@@ -14,7 +14,7 @@ import {
 } from "@/app/actions/updates";
 import {
   getItemDocs,
-  generateDocument,
+  generateDocumentDetailed,
   sendDocForSignature,
   getItemEnvelopes,
   refreshEnvelopes,
@@ -143,6 +143,7 @@ function ItemPanel({
   const [tagStage, setTagStage] = useState<TagStage>("interview");
   const [invMsg, setInvMsg] = useState<string | null>(null);
   const [signMsg, setSignMsg] = useState<string | null>(null);
+  const [genMsg, setGenMsg] = useState<{ text: string; error: boolean } | null>(null);
   const [emails, setEmails] = useState<EmailRow[] | null>(null);
   const [emailTo, setEmailTo] = useState("");
   const [envelopes, setEnvelopes] = useState<EnvelopeRow[] | null>(null);
@@ -228,10 +229,16 @@ function ItemPanel({
 
   function generate() {
     if (!genId) return;
+    setGenMsg(null);
     start(async () => {
-      const id = await generateDocument(boardId, item.id, genId);
+      const result = await generateDocumentDetailed(boardId, item.id, genId);
       setDocs(await getItemDocs(item.id));
-      if (id) window.open(`/doc/${id}`, "_blank");
+      if (result.ok) {
+        window.open(`/doc/${result.id}`, "_blank");
+      } else {
+        setGenMsg({ text: result.error, error: true });
+        setTimeout(() => setGenMsg(null), 6000);
+      }
     });
   }
 
@@ -482,6 +489,11 @@ function ItemPanel({
                   Generate
                 </button>
               </div>
+            )}
+            {genMsg && (
+              <p className={`mt-1.5 text-xs font-medium ${genMsg.error ? "text-danger" : "text-grass"}`}>
+                {genMsg.text}
+              </p>
             )}
             {docs && docs.length > 0 && (
               <div className="mt-2 flex flex-col gap-1.5">

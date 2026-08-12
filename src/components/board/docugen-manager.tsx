@@ -10,8 +10,12 @@ import {
   deleteTemplate,
   setTemplatesActive,
   getPlaceholderList,
+  getBoardItemsLite,
+  docuGenConversionAvailable,
+  previewTemplate,
   type DocuGenData,
   type DocuGenTemplate,
+  type BoardItemLite,
 } from "@/app/actions/docs";
 import type { PlaceholderRow } from "@/lib/placeholders";
 
@@ -421,6 +425,12 @@ function TemplateEditor({
   const [msg, setMsg] = useState<string | null>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
   const [replacing, setReplacing] = useState(false);
+  const [conversionAvailable, setConversionAvailable] = useState<boolean | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  useEffect(() => {
+    docuGenConversionAvailable().then(setConversionAvailable);
+  }, []);
 
   // Signature anchors ({{Signature_1}} etc.) are handled by DocuSign, not mapped.
   const isSignatureAnchor = (p: string) => /^(signature|signer_name|signed_date|date_signed|initial)_?\d*$/i.test(p);
@@ -484,7 +494,7 @@ function TemplateEditor({
         <Field label="Output format">
           <select value={outputFormat} onChange={(e) => setOutputFormat(e.target.value)} className={inp}>
             <option value="docx">DOCX</option>
-            <option value="pdf">PDF (converted — see note)</option>
+            <option value="pdf">PDF{conversionAvailable === false ? " (not yet configured)" : ""}</option>
           </select>
         </Field>
         <Field label="Save generated file to column">
@@ -552,17 +562,136 @@ function TemplateEditor({
         )}
       </div>
 
-      {outputFormat === "pdf" && (
+      {outputFormat === "pdf" && conversionAvailable === false && (
         <p className="mt-2 rounded-lg bg-amber/10 px-3 py-2 text-[11px] text-amber">
-          PDF output is generated via a conversion step (Phase 1b). Until it&rsquo;s enabled, the file is saved as DOCX.
+          PDF conversion isn&rsquo;t configured yet — documents will be saved as DOCX until it is.
         </p>
       )}
 
-      <div className="mt-4 flex items-center justify-end gap-2">
-        <button onClick={onBack} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">Back</button>
-        <button onClick={save} disabled={saving || !name.trim()} className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50">
-          {saving ? "Saving…" : "Save template"}
+      <div className="mt-4 flex items-center justify-between gap-2">
+        <button
+          onClick={() => setPreviewOpen(true)}
+          disabled={template.placeholders.length === 0}
+          className="rounded-lg border border-hair px-3 py-2 text-sm font-medium text-body hover:bg-canvas disabled:opacity-50"
+          title={template.placeholders.length === 0 ? "Upload a template with placeholders first" : "See how this template looks filled in with a real item's data"}
+        >
+          👁 Preview
         </button>
+        <div className="flex items-center gap-2">
+          <button onClick={onBack} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">Back</button>
+          <button onClick={save} disabled={saving || !name.trim()} className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50">
+            {saving ? "Saving…" : "Save template"}
+          </button>
+        </div>
+      </div>
+
+      {previewOpen && (
+        <TemplatePreviewModal
+          boardId={boardId}
+          templateId={template.id}
+          conversionAvailable={conversionAvailable}
+          onClose={() => setPreviewOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Visual layout preview (client walkthrough request): pick a real item and
+// see the template filled with that item's data as an actual rendered PDF —
+// the exact fill logic "Generate" uses, converted via the same CloudConvert
+// pipeline as real PDF output, so what's previewed matches what generating
+// would produce. No GeneratedDocument row is created; this is look-only.
+function TemplatePreviewModal({
+  boardId,
+  templateId,
+  conversionAvailable,
+  onClose,
+}: {
+  boardId: string;
+  templateId: string;
+  conversionAvailable: boolean | null;
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<BoardItemLite[] | null>(null);
+  const [itemId, setItemId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    getBoardItemsLite(boardId).then((rows) => {
+      setItems(rows);
+      if (rows[0]) setItemId(rows[0].id);
+    });
+  }, [boardId]);
+
+  async function runPreview() {
+    if (!itemId) return;
+    setLoading(true);
+    setErr(null);
+    setDataUrl(null);
+    const res = await previewTemplate(boardId, itemId, templateId);
+    setLoading(false);
+    if (res.ok) setDataUrl(res.dataUrl);
+    else setErr(res.error);
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] grid place-items-center p-4">
+      <div className="absolute inset-0 bg-ink/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 flex h-[85vh] w-full max-w-3xl flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-ink">👁 Preview</h2>
+          <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-muted hover:bg-canvas">✕</button>
+        </div>
+
+        {conversionAvailable === false ? (
+          <div className="mt-4 flex flex-1 items-center justify-center">
+            <p className="max-w-sm rounded-lg bg-amber/10 px-4 py-3 text-center text-sm text-amber">
+              Visual preview isn&rsquo;t configured yet — a PDF conversion API key is required to render a
+              real preview.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-body">Preview with data from:</span>
+              <select
+                value={itemId}
+                onChange={(e) => setItemId(e.target.value)}
+                className="min-w-[200px] flex-1 rounded-lg border border-hair px-2.5 py-1.5 text-sm outline-none focus:border-teal"
+              >
+                {items === null && <option value="">Loading items…</option>}
+                {items?.length === 0 && <option value="">No items on this board</option>}
+                {items?.map((it) => (
+                  <option key={it.id} value={it.id}>{it.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={runPreview}
+                disabled={!itemId || loading}
+                className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
+              >
+                {loading ? "Rendering…" : "Render preview"}
+              </button>
+            </div>
+
+            {err && <p className="mt-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">{err}</p>}
+
+            <div className="mt-3 flex-1 overflow-hidden rounded-lg border border-hair bg-canvas/30">
+              {loading ? (
+                <div className="grid h-full place-items-center text-sm text-muted">Rendering preview…</div>
+              ) : dataUrl ? (
+                <iframe src={dataUrl} title="Template preview" className="h-full w-full" />
+              ) : (
+                <div className="grid h-full place-items-center text-sm text-muted">
+                  Pick an item and click Render preview.
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
