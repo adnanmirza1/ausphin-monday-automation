@@ -1136,6 +1136,7 @@ function FloatingPanel({
   children: React.ReactNode;
 }) {
   const [pos, setPos] = useState<{ top: number; left: number; maxH: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = anchorRef.current;
@@ -1155,6 +1156,23 @@ function FloatingPanel({
     });
   }, [anchorRef, width]);
 
+  // The board's own content area scrolls independently of the window (see
+  // board-view.tsx's overflow-auto wrapper), so a `position: fixed` panel
+  // anchored at open-time goes stale — and stays visually stuck over
+  // whatever is now underneath it — the moment that scroll happens. Close
+  // instead of trying to continuously re-track the anchor, which is the
+  // standard, safe behavior for anchored dropdowns.
+  useEffect(() => {
+    function onScroll(e: Event) {
+      // Ignore scroll events from inside the panel itself (e.g. its own
+      // scrollable list of people) — only outside scrolling should close it.
+      if (e.target instanceof Node && panelRef.current?.contains(e.target)) return;
+      onClose();
+    }
+    window.addEventListener("scroll", onScroll, true);
+    return () => window.removeEventListener("scroll", onScroll, true);
+  }, [onClose]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -1168,6 +1186,7 @@ function FloatingPanel({
     <>
       <div className="fixed inset-0 z-40" onMouseDown={onClose} />
       <div
+        ref={panelRef}
         className="fixed z-50"
         style={{ top: pos.top, left: pos.left, width, maxHeight: pos.maxH }}
       >

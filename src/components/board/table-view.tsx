@@ -32,6 +32,7 @@ import {
   deleteGroup,
   reorderItem,
   reorderGroup,
+  moveGroup,
   renameColumn,
   deleteColumn,
   setColumnLabels,
@@ -121,11 +122,13 @@ export function TableView({
   return (
     <SelectionContext.Provider value={sel}>
       <div className="min-w-max p-4 sm:p-6">
-        {board.groups.map((g) => (
+        {board.groups.map((g, i) => (
           <GroupBlock
             key={g.id}
             board={board}
             group={g}
+            isFirst={i === 0}
+            isLast={i === board.groups.length - 1}
             people={people}
             permData={permData}
             readOnly={readOnly}
@@ -221,6 +224,8 @@ const PIN_CLS = "sticky left-0 z-10";
 function GroupBlock({
   board,
   group,
+  isFirst,
+  isLast,
   people,
   permData,
   readOnly,
@@ -231,6 +236,8 @@ function GroupBlock({
 }: {
   board: BoardData;
   group: GroupData;
+  isFirst: boolean;
+  isLast: boolean;
   people: PersonLite[];
   permData: PermData;
   readOnly: boolean;
@@ -278,6 +285,28 @@ function GroupBlock({
             title="Drag to reorder group"
           >
             ⠿
+          </span>
+        )}
+        {!readOnly && (
+          <span className="hidden flex-col leading-none group-hover:flex">
+            <button
+              onClick={() => start(() => void moveGroup(board.id, group.id, "up"))}
+              disabled={isFirst}
+              className="text-[9px] text-muted hover:text-teal disabled:opacity-30 disabled:hover:text-muted"
+              title="Move group up"
+              aria-label="Move group up"
+            >
+              ▲
+            </button>
+            <button
+              onClick={() => start(() => void moveGroup(board.id, group.id, "down"))}
+              disabled={isLast}
+              className="text-[9px] text-muted hover:text-teal disabled:opacity-30 disabled:hover:text-muted"
+              title="Move group down"
+              aria-label="Move group down"
+            >
+              ▼
+            </button>
           </span>
         )}
         <button

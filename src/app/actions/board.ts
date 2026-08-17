@@ -385,6 +385,25 @@ export async function reorderGroup(
   touch(boardId);
 }
 
+// One-click reorder for the ▲▼ buttons — swap a group with its immediate
+// neighbor instead of requiring drag-and-drop.
+export async function moveGroup(boardId: string, groupId: string, direction: "up" | "down") {
+  await requireEditor();
+  const groups = await db.group.findMany({
+    where: { boardId },
+    orderBy: { position: "asc" },
+    select: { id: true, position: true },
+  });
+  const idx = groups.findIndex((g) => g.id === groupId);
+  const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+  if (idx === -1 || swapIdx < 0 || swapIdx >= groups.length) return;
+  const a = groups[idx];
+  const b = groups[swapIdx];
+  await db.group.update({ where: { id: a.id }, data: { position: b.position } });
+  await db.group.update({ where: { id: b.id }, data: { position: a.position } });
+  touch(boardId);
+}
+
 // ── Columns ──────────────────────────────────────────────────
 export async function addColumn(
   boardId: string,
