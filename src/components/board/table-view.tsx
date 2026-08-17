@@ -28,6 +28,7 @@ import {
   renameItem,
   deleteItem,
   addSubitem,
+  reorderSubitem,
   renameGroup,
   setGroupColor,
   deleteGroup,
@@ -606,17 +607,19 @@ function Row({
     <div
       onDragOver={(e) => {
         if (readOnly) return;
+        if (!e.dataTransfer.types.includes("text/plain")) return; // ignore subitem drags
         e.preventDefault();
         setOver(true);
       }}
       onDragLeave={() => setOver(false)}
       onDrop={(e) => {
         if (readOnly) return;
+        const draggedId = e.dataTransfer.getData("text/plain");
+        if (!draggedId) return;
         e.preventDefault();
         e.stopPropagation();
         setOver(false);
-        const draggedId = e.dataTransfer.getData("text/plain");
-        if (draggedId && draggedId !== item.id)
+        if (draggedId !== item.id)
           start(() => void reorderItem(board.id, draggedId, group.id, item.id));
       }}
       style={tint ? { background: tint } : undefined}
@@ -655,12 +658,14 @@ function Row({
             ⠿
           </span>
         )}
-        {hasSubitems ? (
+        {!readOnly || hasSubitems ? (
           <button
             onClick={() => setExpanded((e) => !e)}
-            className="grid h-4 w-4 flex-none place-items-center text-[10px] text-muted hover:text-teal"
-            title={expanded ? "Collapse subitems" : "Expand subitems"}
-            aria-label={expanded ? "Collapse subitems" : "Expand subitems"}
+            className={`grid h-4 w-4 flex-none place-items-center text-[10px] text-muted hover:text-teal ${
+              hasSubitems ? "" : "opacity-0 group-hover:opacity-100"
+            }`}
+            title={expanded ? "Collapse subitems" : hasSubitems ? "Expand subitems" : "Add subitem"}
+            aria-label={expanded ? "Collapse subitems" : hasSubitems ? "Expand subitems" : "Add subitem"}
           >
             {expanded ? "▾" : "▸"}
           </button>
@@ -735,6 +740,7 @@ function Row({
             key={sub.id}
             board={board}
             group={group}
+            parentId={item.id}
             subitem={sub}
             people={people}
             readOnly={readOnly}
@@ -749,11 +755,13 @@ function Row({
 }
 
 // A subitem row: visually indented, same cell-editing machinery as a main
-// row, but no drag-reorder / group-move (subitems stay under their parent)
-// and its own expand toggle isn't needed (subitems don't nest further).
+// row. Drag-reorder is scoped to siblings under the same parent only —
+// subitems never change parent or group via drag (matches monday.com); its
+// own expand toggle isn't needed (subitems don't nest further).
 function SubitemRow({
   board,
   group,
+  parentId,
   subitem,
   people,
   readOnly,
@@ -761,20 +769,59 @@ function SubitemRow({
 }: {
   board: BoardData;
   group: GroupData;
+  parentId: string;
   subitem: SubitemData;
   people: PersonLite[];
   readOnly: boolean;
   connectionOptions: ConnOpts;
 }) {
   const [name, setName] = useState(subitem.name);
+  const [over, setOver] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [, start] = useTransition();
   const { open } = useBoardUI();
 
   return (
-    <div className="group flex items-stretch border-b border-hair bg-canvas/30 last:border-b-0">
+    <div
+      onDragOver={(e) => {
+        if (readOnly) return;
+        if (!e.dataTransfer.types.includes("text/subitem")) return;
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        if (readOnly) return;
+        const draggedId = e.dataTransfer.getData("text/subitem");
+        if (!draggedId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setOver(false);
+        if (draggedId !== subitem.id)
+          start(() => void reorderSubitem(board.id, parentId, draggedId, subitem.id));
+      }}
+      className={`group flex items-stretch border-b border-hair bg-canvas/30 last:border-b-0 ${
+        over ? DRAG_OVER_CLASS : ""
+      } ${dragging ? DRAGGING_CLASS : ""}`}
+    >
       <div className="flex items-center" style={{ width: NAME_W }}>
         <span className="h-full w-1.5 flex-none opacity-40" style={{ background: group.color }} />
-        <span className="ml-3 flex-none text-muted/70" title="Subitem">↳</span>
+        {!readOnly && (
+          <span
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData("text/subitem", subitem.id);
+              e.dataTransfer.effectAllowed = "move";
+              setDragging(true);
+            }}
+            onDragEnd={() => setDragging(false)}
+            className="hidden w-3 flex-none cursor-grab select-none text-center text-[10px] text-muted active:cursor-grabbing group-hover:block"
+            title="Drag to reorder"
+          >
+            ⠿
+          </span>
+        )}
+        <span className="ml-1 flex-none text-muted/70" title="Subitem">↳</span>
         <input
           value={name}
           disabled={readOnly}
@@ -826,6 +873,7 @@ function SubitemRow({
 
 function AddSubitem({ boardId, parentId }: { boardId: string; parentId: string }) {
   const [name, setName] = useState("");
+  const [over, setOver] = useState(false);
   const [, start] = useTransition();
   function submit() {
     if (!name.trim()) return;
@@ -833,7 +881,24 @@ function AddSubitem({ boardId, parentId }: { boardId: string; parentId: string }
     setName("");
   }
   return (
-    <div className="flex items-center bg-canvas/30" style={{ width: NAME_W }}>
+    <div
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("text/subitem")) return;
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        const draggedId = e.dataTransfer.getData("text/subitem");
+        if (!draggedId) return;
+        e.preventDefault();
+        setOver(false);
+        // Dropping past the last row places it at the end of this parent's list.
+        start(() => void reorderSubitem(boardId, parentId, draggedId, null));
+      }}
+      className={`flex items-center bg-canvas/30 ${over ? DRAG_OVER_CLASS : ""}`}
+      style={{ width: NAME_W }}
+    >
       <span className="h-full w-1.5 flex-none opacity-0" />
       <span className="ml-3 flex-none text-muted/40">↳</span>
       <input

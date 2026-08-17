@@ -118,6 +118,41 @@ export async function promoteSubitem(boardId: string, itemId: string) {
   touch(boardId);
 }
 
+// Drag-reorder subitems WITHIN their shared parent only (subitems never
+// change group or move to a different parent via drag — matches
+// monday.com). `subitemId` is placed before `beforeSubitemId` (or at the
+// end when null); positions of every sibling under `parentId` are
+// reindexed. Both ids are re-verified to belong to boardId/parentId rather
+// than trusted from the client.
+export async function reorderSubitem(
+  boardId: string,
+  parentId: string,
+  subitemId: string,
+  beforeSubitemId: string | null
+) {
+  await requireBoardEditor(boardId);
+  if (subitemId === beforeSubitemId) return;
+
+  const parent = await db.item.findFirst({ where: { id: parentId, boardId }, select: { id: true } });
+  if (!parent) throw new Error("Parent item not found on this board.");
+  const moved = await db.item.findFirst({ where: { id: subitemId, boardId, parentId }, select: { id: true } });
+  if (!moved) throw new Error("Subitem not found under this parent.");
+
+  const existing = await db.item.findMany({
+    where: { parentId, boardId },
+    orderBy: { position: "asc" },
+    select: { id: true },
+  });
+  const ids = existing.map((i) => i.id).filter((id) => id !== subitemId);
+  const at = beforeSubitemId ? ids.indexOf(beforeSubitemId) : ids.length;
+  ids.splice(at === -1 ? ids.length : at, 0, subitemId);
+
+  for (let i = 0; i < ids.length; i++) {
+    await db.item.update({ where: { id: ids[i] }, data: { position: i } });
+  }
+  touch(boardId);
+}
+
 export type SubitemRow = { id: string; name: string };
 
 // Subitems of an item, for the item panel drawer (read access only). Scoped
