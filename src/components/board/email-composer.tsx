@@ -156,7 +156,7 @@ export function EmailComposer({
     setShowBoardFiles(true);
     if (boardFiles === null) {
       setLoadingFiles(true);
-      getItemFiles(itemId)
+      getItemFiles(boardId, itemId)
         .then((list) => setBoardFiles(list))
         .catch(() => setBoardFiles([]))
         .finally(() => setLoadingFiles(false));

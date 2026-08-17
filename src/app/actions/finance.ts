@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireEditor, requireAdmin } from "@/lib/guard";
+import { requireEditor, requireAdmin, requireBoardEditor } from "@/lib/guard";
 import { parseMoney, formatMoney } from "@/lib/money";
 import { createStripeInvoice, type StripeAccount } from "@/lib/stripe";
 import { sendMail } from "@/lib/mailer";
@@ -45,9 +45,9 @@ export async function requestInvoiceForItem(
   itemId: string,
   account: string
 ) {
-  const user = await requireEditor();
-  const item = await db.item.findUnique({
-    where: { id: itemId },
+  const user = await requireBoardEditor(boardId);
+  const item = await db.item.findFirst({
+    where: { id: itemId, boardId },
     include: { cells: { include: { column: true } }, board: true },
   });
   if (!item) return;
@@ -74,25 +74,28 @@ export async function requestInvoiceForItem(
 }
 
 // ── Approve (Accounts / admin) ────────────────────────────────
+// Invoice.orgId is always re-checked against the admin's own org before any
+// write — an admin in one org must never be able to touch another org's
+// invoice by guessing/crafting its id.
 export async function approveInvoice(id: string) {
   const admin = await requireAdmin();
-  await db.invoice.update({
-    where: { id },
+  await db.invoice.updateMany({
+    where: { id, orgId: admin.orgId },
     data: { status: "approved", approvedById: admin.id },
   });
   touch();
 }
 
 export async function rejectInvoice(id: string) {
-  await requireAdmin();
-  await db.invoice.update({ where: { id }, data: { status: "rejected" } });
+  const admin = await requireAdmin();
+  await db.invoice.updateMany({ where: { id, orgId: admin.orgId }, data: { status: "rejected" } });
   touch();
 }
 
 // ── Generate Stripe invoice (Accounts) → auto-email candidate ─
 export async function generateInvoice(id: string) {
-  await requireAdmin();
-  const inv = await db.invoice.findUnique({ where: { id } });
+  const admin = await requireAdmin();
+  const inv = await db.invoice.findFirst({ where: { id, orgId: admin.orgId } });
   if (!inv) return;
 
   const created = await createStripeInvoice({
@@ -132,23 +135,23 @@ export async function generateInvoice(id: string) {
 
 // ── Payment ───────────────────────────────────────────────────
 export async function markPaid(id: string) {
-  await requireAdmin();
-  await db.invoice.update({ where: { id }, data: { status: "paid" } });
+  const admin = await requireAdmin();
+  await db.invoice.updateMany({ where: { id, orgId: admin.orgId }, data: { status: "paid" } });
   touch();
 }
 
 // Offline (Serop / bank transfer) — captured manually (Part 17).
 export async function markPaidOffline(id: string) {
-  await requireAdmin();
-  await db.invoice.update({
-    where: { id },
+  const admin = await requireAdmin();
+  await db.invoice.updateMany({
+    where: { id, orgId: admin.orgId },
     data: { status: "paid", paymentMethod: "offline" },
   });
   touch();
 }
 
 export async function deleteInvoice(id: string) {
-  await requireAdmin();
-  await db.invoice.delete({ where: { id } });
+  const admin = await requireAdmin();
+  await db.invoice.deleteMany({ where: { id, orgId: admin.orgId } });
   touch();
 }

@@ -438,6 +438,7 @@ function TemplateEditor({
   const [outputColumnId, setOutputColumnId] = useState(template.outputColumnId ?? "");
   const [mapping, setMapping] = useState<Record<string, string>>(template.mapping);
   const [subitemColumns, setSubitemColumns] = useState<string[]>(template.subitemColumns);
+  const [itemTableColumns, setItemTableColumns] = useState<string[]>(template.itemTableColumns);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
@@ -460,10 +461,17 @@ function TemplateEditor({
   const subitemEligibleTypes = new Set(["text", "longtext", "status", "person", "date", "number", "email", "phone", "url"]);
   const subitemEligibleColumns = columns.filter((c) => subitemEligibleTypes.has(c.type));
 
+  // Columns eligible to appear as an item-table field — mirrors
+  // resolveItemTableRows in generate-doc.ts exactly (adds "mirror" over the
+  // subitem-eligible set, since item tables read from the item's own
+  // already-resolved values and don't need to requery a related record).
+  const itemTableEligibleTypes = new Set(["text", "longtext", "status", "person", "date", "number", "email", "phone", "url", "mirror"]);
+  const itemTableEligibleColumns = columns.filter((c) => itemTableEligibleTypes.has(c.type));
+
   async function save() {
     setSaving(true);
     await saveTemplateMeta(boardId, template.id, {
-      name, viewName, reference, employer, category, folder, mapping, subitemColumns, outputFormat,
+      name, viewName, reference, employer, category, folder, mapping, subitemColumns, itemTableColumns, outputFormat,
       outputColumnId: outputColumnId || null,
     });
     await onSaved();
@@ -515,6 +523,9 @@ function TemplateEditor({
               {s.label}
               {s.id === "subitemTables" && template.hasSubitemsLoop && (
                 <span className="ml-auto h-1.5 w-1.5 rounded-full bg-teal" title="This template uses a subitem table" />
+              )}
+              {s.id === "itemTables" && template.hasItemTableLoop && (
+                <span className="ml-auto h-1.5 w-1.5 rounded-full bg-teal" title="This template uses an item table" />
               )}
               {s.id === "automation" && template.usageCount > 0 && (
                 <span className="ml-auto rounded-full bg-canvas px-1.5 text-[10px] text-muted">{template.usageCount}</span>
@@ -622,24 +633,47 @@ function TemplateEditor({
           <div>
             <h3 className="mb-1 text-sm font-bold text-ink">Item tables</h3>
             <p className="mb-3 text-xs text-muted">
-              The board columns available to this template — the same columns shown in the {itemColumnName} table.
-              Use these via the <b>Placeholders</b> section or the board&rsquo;s <b>Configuration</b> tab.
+              Add <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px] text-teal-deep">{"{{#item_fields}}"}</code> and{" "}
+              <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px] text-teal-deep">{"{{/item_fields}}"}</code> around a
+              table row in the .docx (one in the first cell, the other in the last) to repeat that row once per
+              selected {itemColumnName.toLowerCase()} field — e.g. a Field | Value table listing Name, Email, Status.
+              Inside the loop use <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px] text-teal-deep">{"{{field}}"}</code>{" "}
+              and <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px] text-teal-deep">{"{{value}}"}</code>.
             </p>
-            <div className="overflow-hidden rounded-lg border border-hair">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-canvas/60 text-muted">
-                  <tr><th className="px-3 py-1.5 font-semibold">Column</th><th className="px-3 py-1.5 font-semibold">Type</th></tr>
-                </thead>
-                <tbody>
-                  {columns.map((c) => (
-                    <tr key={c.id} className="border-t border-hair">
-                      <td className="px-3 py-1.5 text-body">{c.name}</td>
-                      <td className="px-3 py-1.5 text-muted">{c.type}</td>
-                    </tr>
+            {!template.hasItemTableLoop ? (
+              <p className="rounded-lg border border-dashed border-hair px-3 py-3 text-xs text-muted">
+                This template doesn&rsquo;t use an item table yet. Add the <code>{"{{#item_fields}}"}</code> /
+                <code>{"{{/item_fields}}"}</code> tags to your .docx and replace the file under <b>Template</b> — this
+                section will then let you choose which columns appear as rows.
+              </p>
+            ) : (
+              <>
+                <p className="mb-2 rounded-lg bg-teal/5 px-3 py-2 text-[11px] font-medium text-teal-deep">
+                  ✓ Item table detected. Choose which columns appear as rows (leave none checked to include all
+                  eligible columns).
+                </p>
+                <div className="grid gap-1">
+                  {itemTableEligibleColumns.map((c) => (
+                    <label key={c.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-body hover:bg-canvas">
+                      <input
+                        type="checkbox"
+                        checked={itemTableColumns.includes(c.name)}
+                        onChange={(e) =>
+                          setItemTableColumns((cols) =>
+                            e.target.checked ? [...cols, c.name] : cols.filter((n) => n !== c.name)
+                          )
+                        }
+                      />
+                      {c.name}
+                      <span className="text-[10px] text-muted">({c.type})</span>
+                    </label>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                  {itemTableEligibleColumns.length === 0 && (
+                    <p className="text-xs text-muted">No eligible columns on this board yet.</p>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -704,7 +738,11 @@ function TemplateEditor({
             <div className="mt-4 flex items-center justify-between rounded-lg border border-hair px-3 py-2.5">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-body">{template.docxName || "No file"}</p>
-                <p className="text-[11px] text-muted">v{template.version}{template.hasSubitemsLoop ? " · subitem table" : ""}</p>
+                <p className="text-[11px] text-muted">
+                  v{template.version}
+                  {template.hasSubitemsLoop ? " · subitem table" : ""}
+                  {template.hasItemTableLoop ? " · item table" : ""}
+                </p>
               </div>
               <button onClick={() => replaceRef.current?.click()} disabled={replacing} className="flex-none text-xs text-teal hover:underline disabled:opacity-60">
                 {replacing ? "Replacing…" : "⬆ Download / Upload (⟳ Replace .docx)"}

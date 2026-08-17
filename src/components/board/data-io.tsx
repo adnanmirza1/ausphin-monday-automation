@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import type { BoardData } from "@/lib/board-types";
 import { importItems } from "@/app/actions/board";
 import { urlDisplay, parseFileValue } from "@/lib/cell-values";
+import { DropdownMenu } from "@/components/ui/popover";
 
 // Resolve a cell to a plain string for export.
 function cellText(board: BoardData, colId: string, item: BoardData["groups"][number]["items"][number]): string {
@@ -125,36 +126,40 @@ export function ImportExportButton({ board }: { board: BoardData }) {
 
   return (
     <>
-      <div className="relative">
-        <button
-          onClick={() => setMenu((o) => !o)}
-          className="rounded-lg border border-hair px-3 py-1.5 text-xs font-medium text-body hover:bg-canvas"
-        >
-          ⇅ Data
-        </button>
-        {menu && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setMenu(false)} />
-            <div className="absolute right-0 z-50 mt-1 w-44 rounded-lg border border-hair bg-white p-1 shadow-pop">
-              <button onClick={exportExcel} className="block w-full rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas">
-                ⬇ Export all data (Excel)
-              </button>
-              <button onClick={exportCsv} className="block w-full rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas">
-                ⬇ Export to CSV
-              </button>
-              <button
-                onClick={() => {
-                  setMenu(false);
-                  setImporting(true);
-                }}
-                className="block w-full rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas"
-              >
-                ⬆ Import (CSV / Excel)
-              </button>
-            </div>
-          </>
+      <DropdownMenu
+        open={menu}
+        onOpenChange={setMenu}
+        width={176}
+        align="right"
+        trigger={(p) => (
+          <button
+            ref={p.ref}
+            onClick={p.onClick}
+            aria-expanded={p["aria-expanded"]}
+            aria-haspopup={p["aria-haspopup"]}
+            className="rounded-lg border border-hair px-3 py-1.5 text-xs font-medium text-body hover:bg-canvas"
+          >
+            ⇅ Data
+          </button>
         )}
-      </div>
+        panelClassName="rounded-lg border border-hair bg-white p-1 shadow-pop overflow-y-auto scroll-thin"
+      >
+        <button onClick={exportExcel} className="block w-full rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas">
+          ⬇ Export all data (Excel)
+        </button>
+        <button onClick={exportCsv} className="block w-full rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas">
+          ⬇ Export to CSV
+        </button>
+        <button
+          onClick={() => {
+            setMenu(false);
+            setImporting(true);
+          }}
+          className="block w-full rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas"
+        >
+          ⬆ Import (CSV / Excel)
+        </button>
+      </DropdownMenu>
       {importing && <ImportModal board={board} onClose={() => setImporting(false)} />}
     </>
   );

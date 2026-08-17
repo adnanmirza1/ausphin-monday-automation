@@ -13,6 +13,7 @@ import {
 } from "@/app/actions/environment";
 import { PALETTE } from "@/lib/constants";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { DropdownMenu } from "@/components/ui/popover";
 
 export type NavEnv = {
   id: string;
@@ -266,100 +267,104 @@ function EnvMenu({ env }: { env: NavEnv }) {
   }
 
   return (
-    <div className="relative flex-none">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className={`h-6 w-6 flex-none place-items-center rounded text-white/40 hover:bg-rail-hover hover:text-white ${
-          open ? "grid" : "hidden group-hover:grid"
-        }`}
-        title="Manage workspace"
-      >
-        ⋯
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-40 mt-1 w-56 rounded-lg border border-white/10 bg-rail p-1 shadow-pop">
-            <p className="truncate px-2 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-white/35">
-              {env.name}
-            </p>
-
-            {/* Edit */}
-            <MenuRow icon="✎" label="Rename workspace" onClick={() => { setOpen(false); setRenaming(true); }} />
-
-            {/* Organize */}
-            <MenuRow
-              icon="↕"
-              label="Sort boards A–Z"
-              onClick={() => { setOpen(false); start(() => void sortBoards(env.id)); }}
-            />
-
-            <div className="my-1 border-t border-white/10" />
-
-            {/* Create */}
-            <MenuRow
-              icon="＋"
-              label="Add board"
-              onClick={() => {
-                setOpen(false);
-                const n = window.prompt("New board name:");
-                if (n && n.trim())
-                  start(async () => {
-                    const id = await addBoard(env.id, n.trim());
-                    if (id) router.push(`/boards/${id}`);
-                  });
-              }}
-            />
-            <MenuRow
-              icon="⊞"
-              label="Add new workspace"
-              onClick={() => {
-                setOpen(false);
-                const n = window.prompt("New workspace name:");
-                if (n && n.trim()) start(() => void createEnvironment(n.trim()));
-              }}
-            />
-
-            <div className="my-1 border-t border-white/10" />
-
-            {/* Color */}
-            <p className="px-2 pb-1 pt-0.5 text-[11px] text-white/40">Workspace color</p>
-            <div className="flex flex-wrap gap-1 px-2 pb-1">
-              {PALETTE.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => { setOpen(false); start(() => void setEnvironmentColor(env.id, c)); }}
-                  className={`h-4 w-4 rounded ring-offset-1 ring-offset-rail hover:ring-2 hover:ring-white/40 ${
-                    env.color === c ? "ring-2 ring-white" : ""
-                  }`}
-                  style={{ background: c }}
-                  title="Set color"
-                />
-              ))}
-            </div>
-
-            <div className="my-1 border-t border-white/10" />
-
-            {/* Archive / Trash */}
-            <MenuRow
-              icon="🗄"
-              label="View archive/trash"
-              onClick={() => { setOpen(false); router.push("/trash"); }}
-            />
-            <MenuRow
-              icon="🗑"
-              label="Archive workspace"
-              danger
-              onClick={() => {
-                setOpen(false);
-                if (confirm(`Archive workspace "${env.name}"? You can restore it from Archive/Trash.`))
-                  start(() => void archiveEnvironment(env.id));
-              }}
-            />
-          </div>
-        </>
+    <DropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      width={224}
+      align="right"
+      trigger={(p) => (
+        <button
+          ref={p.ref}
+          onClick={p.onClick}
+          aria-expanded={p["aria-expanded"]}
+          aria-haspopup={p["aria-haspopup"]}
+          className={`h-6 w-6 flex-none place-items-center rounded text-white/40 hover:bg-rail-hover hover:text-white ${
+            open ? "grid" : "hidden group-hover:grid"
+          }`}
+          title="Manage workspace"
+        >
+          ⋯
+        </button>
       )}
-    </div>
+      panelClassName="rounded-lg border border-white/10 bg-rail p-1 shadow-pop overflow-y-auto scroll-thin"
+    >
+      <p className="truncate px-2 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-white/35">
+        {env.name}
+      </p>
+
+      {/* Edit */}
+      <MenuRow icon="✎" label="Rename workspace" onClick={() => { setOpen(false); setRenaming(true); }} />
+
+      {/* Organize */}
+      <MenuRow
+        icon="↕"
+        label="Sort boards A–Z"
+        onClick={() => { setOpen(false); start(() => void sortBoards(env.id)); }}
+      />
+
+      <div className="my-1 border-t border-white/10" />
+
+      {/* Create */}
+      <MenuRow
+        icon="＋"
+        label="Add board"
+        onClick={() => {
+          setOpen(false);
+          const n = window.prompt("New board name:");
+          if (n && n.trim())
+            start(async () => {
+              const id = await addBoard(env.id, n.trim());
+              if (id) router.push(`/boards/${id}`);
+            });
+        }}
+      />
+      <MenuRow
+        icon="⊞"
+        label="Add new workspace"
+        onClick={() => {
+          setOpen(false);
+          const n = window.prompt("New workspace name:");
+          if (n && n.trim()) start(() => void createEnvironment(n.trim()));
+        }}
+      />
+
+      <div className="my-1 border-t border-white/10" />
+
+      {/* Color */}
+      <p className="px-2 pb-1 pt-0.5 text-[11px] text-white/40">Workspace color</p>
+      <div className="flex flex-wrap gap-1 px-2 pb-1">
+        {PALETTE.map((c) => (
+          <button
+            key={c}
+            onClick={() => { setOpen(false); start(() => void setEnvironmentColor(env.id, c)); }}
+            className={`h-4 w-4 rounded ring-offset-1 ring-offset-rail hover:ring-2 hover:ring-white/40 ${
+              env.color === c ? "ring-2 ring-white" : ""
+            }`}
+            style={{ background: c }}
+            title="Set color"
+          />
+        ))}
+      </div>
+
+      <div className="my-1 border-t border-white/10" />
+
+      {/* Archive / Trash */}
+      <MenuRow
+        icon="🗄"
+        label="View archive/trash"
+        onClick={() => { setOpen(false); router.push("/trash"); }}
+      />
+      <MenuRow
+        icon="🗑"
+        label="Archive workspace"
+        danger
+        onClick={() => {
+          setOpen(false);
+          if (confirm(`Archive workspace "${env.name}"? You can restore it from Archive/Trash.`))
+            start(() => void archiveEnvironment(env.id));
+        }}
+      />
+    </DropdownMenu>
   );
 }
 

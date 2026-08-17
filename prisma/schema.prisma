@@ -384,6 +384,14 @@ model DocTemplate {
   hasSubitemsLoop Boolean @default(false)
   subitemColumns  String  @default("[]")
 
+  // Item tables: the template contains a {{#item_fields}}...{{/item_fields}}
+  // loop around a table row (detected on upload/replace) — one repeated row
+  // per SELECTED column of the current item (a Field | Value table), not
+  // per related record. itemTableColumns picks which board columns appear,
+  // in order — JSON array of column NAMES.
+  hasItemTableLoop Boolean @default(false)
+  itemTableColumns String  @default("[]")
+
   // Output
   outputFormat   String  @default("docx")    // "docx" | "pdf"
   outputColumnId String?                     // File column to save the generated doc into

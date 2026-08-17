@@ -60,6 +60,8 @@ export type DocuGenTemplate = {
   mapping: Record<string, string>;
   hasSubitemsLoop: boolean;
   subitemColumns: string[];
+  hasItemTableLoop: boolean;
+  itemTableColumns: string[];
   outputFormat: string;
   outputColumnId: string | null;
   active: boolean;
@@ -129,6 +131,8 @@ export async function getDocuGenData(boardId: string): Promise<DocuGenData> {
       mapping: jsonObj(t.mapping),
       hasSubitemsLoop: t.hasSubitemsLoop,
       subitemColumns: jsonArr(t.subitemColumns),
+      hasItemTableLoop: t.hasItemTableLoop,
+      itemTableColumns: jsonArr(t.itemTableColumns),
       outputFormat: t.outputFormat,
       outputColumnId: t.outputColumnId,
       active: t.active,
@@ -201,10 +205,12 @@ export async function uploadDocxTemplate(
 
   let placeholders: string[] = [];
   let hasSubitemsLoop = false;
+  let hasItemTableLoop = false;
   try {
     const detected = extractPlaceholders(buf);
     placeholders = detected.placeholders;
     hasSubitemsLoop = detected.hasSubitemsLoop;
+    hasItemTableLoop = detected.hasItemTableLoop;
   } catch {
     return { ok: false, error: "That doesn't look like a valid .docx file." };
   }
@@ -239,6 +245,7 @@ export async function uploadDocxTemplate(
       placeholders: JSON.stringify(placeholders),
       mapping: JSON.stringify(mapping),
       hasSubitemsLoop,
+      hasItemTableLoop,
       outputFormat: "docx",
       active: true,
       version: 1,
@@ -255,7 +262,7 @@ export async function saveTemplateMeta(
   patch: Partial<{
     name: string; viewName: string; reference: string; employer: string;
     category: string; folder: string; mapping: Record<string, string>;
-    subitemColumns: string[];
+    subitemColumns: string[]; itemTableColumns: string[];
     outputFormat: string; outputColumnId: string | null;
   }>
 ): Promise<void> {
@@ -269,6 +276,7 @@ export async function saveTemplateMeta(
   if (patch.folder !== undefined) data.folder = patch.folder.trim();
   if (patch.mapping !== undefined) data.mapping = JSON.stringify(patch.mapping);
   if (patch.subitemColumns !== undefined) data.subitemColumns = JSON.stringify(patch.subitemColumns);
+  if (patch.itemTableColumns !== undefined) data.itemTableColumns = JSON.stringify(patch.itemTableColumns);
   if (patch.outputFormat !== undefined) data.outputFormat = patch.outputFormat;
   if (patch.outputColumnId !== undefined) data.outputColumnId = patch.outputColumnId;
   await db.docTemplate.updateMany({ where: { id, boardId }, data });
@@ -289,10 +297,12 @@ export async function replaceTemplateFile(
   try { buf = bufFromDataUrl(input.dataUrl); } catch { return { ok: false, error: "Could not read the file." }; }
   let placeholders: string[] = [];
   let hasSubitemsLoop = false;
+  let hasItemTableLoop = false;
   try {
     const detected = extractPlaceholders(buf);
     placeholders = detected.placeholders;
     hasSubitemsLoop = detected.hasSubitemsLoop;
+    hasItemTableLoop = detected.hasItemTableLoop;
   } catch {
     return { ok: false, error: "Invalid .docx file." };
   }
@@ -304,7 +314,7 @@ export async function replaceTemplateFile(
   const url = await putFile(`templates/${boardId}/${input.fileName}`, buf, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
   await db.docTemplate.update({
     where: { id },
-    data: { docxUrl: url, docxName: input.fileName, placeholders: JSON.stringify(placeholders), hasSubitemsLoop, version: cur.version + 1 },
+    data: { docxUrl: url, docxName: input.fileName, placeholders: JSON.stringify(placeholders), hasSubitemsLoop, hasItemTableLoop, version: cur.version + 1 },
   });
   revalidatePath(`/boards/${boardId}`);
   return { ok: true, id, placeholders };
@@ -330,6 +340,10 @@ export async function duplicateTemplate(boardId: string, id: string): Promise<vo
       docxName: t.docxName,
       placeholders: t.placeholders,
       mapping: t.mapping,
+      hasSubitemsLoop: t.hasSubitemsLoop,
+      subitemColumns: t.subitemColumns,
+      hasItemTableLoop: t.hasItemTableLoop,
+      itemTableColumns: t.itemTableColumns,
       outputFormat: t.outputFormat,
       outputColumnId: t.outputColumnId,
       active: t.active,
@@ -349,10 +363,10 @@ export async function setTemplatesActive(boardId: string, ids: string[], active:
 // ── Generate ──────────────────────────────────────────────────
 export type DocRow = { id: string; name: string; createdAt: string };
 
-export async function getItemDocs(itemId: string): Promise<DocRow[]> {
-  await requireUser();
+export async function getItemDocs(boardId: string, itemId: string): Promise<DocRow[]> {
+  await requireBoardAccessAsUser(boardId);
   const docs = await db.generatedDocument.findMany({
-    where: { itemId },
+    where: { itemId, item: { boardId } },
     orderBy: { createdAt: "desc" },
     select: { id: true, name: true, createdAt: true },
   });

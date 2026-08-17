@@ -24,6 +24,7 @@ import {
   type ViewType,
 } from "@/app/actions/views";
 import { BoardDashboard, type WidgetConfig, type ChartFilter } from "@/components/board/board-dashboard";
+import { DropdownMenu } from "@/components/ui/popover";
 
 const VIEW_ICON: Record<string, string> = {
   table: "▤",
@@ -432,31 +433,34 @@ export function BoardView({
               </ViewTab>
             ))}
             {!readOnly && (
-              <div className="relative">
-                <button
-                  onClick={() => setAddViewOpen((o) => !o)}
-                  className="rounded-md px-2.5 py-1.5 text-sm text-muted hover:text-teal"
-                  title="Add a view to this board"
-                >
-                  + Add view
-                </button>
-                {addViewOpen && (
-                  <>
-                    <div className="fixed inset-0 z-20" onClick={() => setAddViewOpen(false)} />
-                    <div className="absolute left-0 z-30 mt-1 w-56 rounded-xl border border-hair bg-white p-1.5 shadow-pop">
-                      <p className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
-                        Add a view
-                      </p>
-                      <AddViewItem icon={VIEW_ICON.table} label="Table" onClick={() => addView("table")} />
-                      <AddViewItem icon={VIEW_ICON.kanban} label="Kanban" disabled={!hasStatus} hint={!hasStatus ? "needs status" : undefined} onClick={() => addView("kanban")} />
-                      <AddViewItem icon={VIEW_ICON.calendar} label="Calendar" disabled={!hasDate} hint={!hasDate ? "needs date" : undefined} onClick={() => addView("calendar")} />
-                      <AddViewItem icon={VIEW_ICON.dashboard} label="Dashboard" onClick={() => addView("dashboard")} />
-                      <div className="my-1 border-t border-hair" />
-                      <AddViewItem icon="📝" label="Form" onClick={() => { setFormsSignal((s) => s + 1); setAddViewOpen(false); }} />
-                    </div>
-                  </>
+              <DropdownMenu
+                open={addViewOpen}
+                onOpenChange={setAddViewOpen}
+                width={224}
+                trigger={(p) => (
+                  <button
+                    ref={p.ref}
+                    onClick={p.onClick}
+                    aria-expanded={p["aria-expanded"]}
+                    aria-haspopup={p["aria-haspopup"]}
+                    className="rounded-md px-2.5 py-1.5 text-sm text-muted hover:text-teal"
+                    title="Add a view to this board"
+                  >
+                    + Add view
+                  </button>
                 )}
-              </div>
+                panelClassName="rounded-xl border border-hair bg-white p-1.5 shadow-pop overflow-y-auto scroll-thin"
+              >
+                <p className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                  Add a view
+                </p>
+                <AddViewItem icon={VIEW_ICON.table} label="Table" onClick={() => addView("table")} />
+                <AddViewItem icon={VIEW_ICON.kanban} label="Kanban" disabled={!hasStatus} hint={!hasStatus ? "needs status" : undefined} onClick={() => addView("kanban")} />
+                <AddViewItem icon={VIEW_ICON.calendar} label="Calendar" disabled={!hasDate} hint={!hasDate ? "needs date" : undefined} onClick={() => addView("calendar")} />
+                <AddViewItem icon={VIEW_ICON.dashboard} label="Dashboard" onClick={() => addView("dashboard")} />
+                <div className="my-1 border-t border-hair" />
+                <AddViewItem icon="📝" label="Form" onClick={() => { setFormsSignal((s) => s + 1); setAddViewOpen(false); }} />
+              </DropdownMenu>
             )}
             {!readOnly && active && (
               <div className="flex items-center gap-0.5">
@@ -809,35 +813,44 @@ function BoardTitle({ boardId, name, readOnly }: { boardId: string; name: string
   }
 
   return (
-    <div className="relative flex items-center gap-1">
+    <div className="flex items-center gap-1">
       <h1 className="truncate text-lg font-bold text-ink">{name}</h1>
       {!readOnly && (
-        <button onClick={() => setMenu((m) => !m)} className="rounded px-1 text-muted hover:text-ink" title="Board options">
-          ⋯
-        </button>
-      )}
-      {menu && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setMenu(false)} />
-          <div className="absolute left-0 top-8 z-30 w-36 rounded-lg border border-hair bg-white p-1 shadow-pop">
+        <DropdownMenu
+          open={menu}
+          onOpenChange={setMenu}
+          width={144}
+          trigger={(p) => (
             <button
-              onClick={() => { setMenu(false); setEditing(true); }}
-              className="block w-full rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas"
+              ref={p.ref}
+              onClick={p.onClick}
+              aria-expanded={p["aria-expanded"]}
+              aria-haspopup={p["aria-haspopup"]}
+              className="rounded px-1 text-muted hover:text-ink"
+              title="Board options"
             >
-              Rename board
+              ⋯
             </button>
-            <button
-              onClick={() => {
-                setMenu(false);
-                if (confirm(`Archive board "${name}"? You can restore it from Archive/Trash.`))
-                  start(async () => { await archiveBoard(boardId); router.push("/"); });
-              }}
-              className="block w-full rounded px-2 py-1.5 text-left text-sm text-danger hover:bg-canvas"
-            >
-              Archive board
-            </button>
-          </div>
-        </>
+          )}
+          panelClassName="rounded-lg border border-hair bg-white p-1 shadow-pop"
+        >
+          <button
+            onClick={() => { setMenu(false); setEditing(true); }}
+            className="block w-full rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas"
+          >
+            Rename board
+          </button>
+          <button
+            onClick={() => {
+              setMenu(false);
+              if (confirm(`Archive board "${name}"? You can restore it from Archive/Trash.`))
+                start(async () => { await archiveBoard(boardId); router.push("/"); });
+            }}
+            className="block w-full rounded px-2 py-1.5 text-left text-sm text-danger hover:bg-canvas"
+          >
+            Archive board
+          </button>
+        </DropdownMenu>
       )}
     </div>
   );
@@ -901,22 +914,26 @@ function Popover({
   open, setOpen, label, children,
 }: { open: boolean; setOpen: (v: boolean) => void; label: string; children: React.ReactNode }) {
   return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className="rounded-lg border border-hair bg-white px-3 py-1.5 text-sm text-body hover:bg-canvas"
-      >
-        {label}
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-30 mt-1 w-64 rounded-xl border border-hair bg-white p-3 shadow-pop">
-            {children}
-          </div>
-        </>
+    <DropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      width={256}
+      maxHeight={420}
+      trigger={(p) => (
+        <button
+          ref={p.ref}
+          onClick={p.onClick}
+          aria-expanded={p["aria-expanded"]}
+          aria-haspopup={p["aria-haspopup"]}
+          className="rounded-lg border border-hair bg-white px-3 py-1.5 text-sm text-body hover:bg-canvas"
+        >
+          {label}
+        </button>
       )}
-    </div>
+      panelClassName="rounded-xl border border-hair bg-white p-3 shadow-pop overflow-y-auto scroll-thin"
+    >
+      {children}
+    </DropdownMenu>
   );
 }
 
@@ -942,66 +959,70 @@ function FilterPanel({
   const on = (columnId: string, value: string) =>
     filters.some((f) => f.columnId === columnId && f.value === value);
   return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className={`rounded-lg border px-3 py-1.5 text-sm hover:bg-canvas ${
-          filters.length ? "border-teal/50 bg-teal/5 text-teal-deep" : "border-hair bg-white text-body"
-        }`}
-      >
-        Filter{filters.length ? ` · ${filters.length}` : ""}
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-30 mt-1 w-[min(92vw,760px)] rounded-xl border border-hair bg-white p-4 shadow-pop">
-            <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm font-bold text-ink">
-                Quick filters{" "}
-                <span className="ml-1 text-xs font-normal text-muted">
-                  Showing {shown} of {total}
-                </span>
-              </p>
-              {filters.length > 0 && (
-                <button onClick={clearAll} className="text-xs text-muted hover:text-danger">
-                  Clear all
-                </button>
-              )}
-            </div>
-            <div className="flex gap-4 overflow-x-auto scroll-thin pb-1">
-              {facets.map((facet) => (
-                <div key={facet.key} className="w-40 flex-none">
-                  <p className="mb-1.5 truncate text-xs font-semibold text-muted">{facet.name}</p>
-                  <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto scroll-thin">
-                    {facet.options.map((opt) => {
-                      const active = on(facet.columnId ?? facet.key, opt.value);
-                      return (
-                        <button
-                          key={opt.value || "__blank__"}
-                          onClick={() => toggle(facet.columnId ?? facet.key, opt.value)}
-                          className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs transition ${
-                            active ? "bg-teal/10 ring-1 ring-teal/40" : "hover:bg-canvas"
-                          }`}
-                        >
-                          {opt.color && (
-                            <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: opt.color }} />
-                          )}
-                          {opt.personColor && (
-                            <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: opt.personColor }} />
-                          )}
-                          <span className="flex-1 truncate text-body">{opt.label}</span>
-                          <span className="flex-none text-[10px] text-muted">{opt.count}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
+    <DropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      width={760}
+      maxHeight={420}
+      trigger={(p) => (
+        <button
+          ref={p.ref}
+          onClick={p.onClick}
+          aria-expanded={p["aria-expanded"]}
+          aria-haspopup={p["aria-haspopup"]}
+          className={`rounded-lg border px-3 py-1.5 text-sm hover:bg-canvas ${
+            filters.length ? "border-teal/50 bg-teal/5 text-teal-deep" : "border-hair bg-white text-body"
+          }`}
+        >
+          Filter{filters.length ? ` · ${filters.length}` : ""}
+        </button>
+      )}
+      panelClassName="w-[min(92vw,760px)] rounded-xl border border-hair bg-white p-4 shadow-pop overflow-y-auto scroll-thin"
+    >
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-sm font-bold text-ink">
+          Quick filters{" "}
+          <span className="ml-1 text-xs font-normal text-muted">
+            Showing {shown} of {total}
+          </span>
+        </p>
+        {filters.length > 0 && (
+          <button onClick={clearAll} className="text-xs text-muted hover:text-danger">
+            Clear all
+          </button>
+        )}
+      </div>
+      <div className="flex gap-4 overflow-x-auto scroll-thin pb-1">
+        {facets.map((facet) => (
+          <div key={facet.key} className="w-40 flex-none">
+            <p className="mb-1.5 truncate text-xs font-semibold text-muted">{facet.name}</p>
+            <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto scroll-thin">
+              {facet.options.map((opt) => {
+                const active = on(facet.columnId ?? facet.key, opt.value);
+                return (
+                  <button
+                    key={opt.value || "__blank__"}
+                    onClick={() => toggle(facet.columnId ?? facet.key, opt.value)}
+                    className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs transition ${
+                      active ? "bg-teal/10 ring-1 ring-teal/40" : "hover:bg-canvas"
+                    }`}
+                  >
+                    {opt.color && (
+                      <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: opt.color }} />
+                    )}
+                    {opt.personColor && (
+                      <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: opt.personColor }} />
+                    )}
+                    <span className="flex-1 truncate text-body">{opt.label}</span>
+                    <span className="flex-none text-[10px] text-muted">{opt.count}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
-        </>
-      )}
-    </div>
+        ))}
+      </div>
+    </DropdownMenu>
   );
 }
 

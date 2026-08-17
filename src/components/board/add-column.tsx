@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { COLUMN_TYPE_META, COLUMN_TYPES, type ColumnType } from "@/lib/constants";
 import { addColumn } from "@/app/actions/board";
+import { DropdownMenu } from "@/components/ui/popover";
 
 type BoardLite = { id: string; name: string };
 type ColLite = { id: string; name: string; type: string };
@@ -53,119 +54,124 @@ export function AddColumnButton({
   }
 
   return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="rounded-lg bg-teal px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-deep"
-      >
-        + Column
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-30 mt-1 w-72 rounded-xl border border-hair bg-white p-3 shadow-pop">
-            <label className="mb-1 block text-xs font-semibold text-body">Name</label>
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Column name"
-              className="mb-3 w-full rounded-lg border border-hair px-2.5 py-2 text-sm outline-none focus:border-teal"
-            />
-            <label className="mb-1.5 block text-xs font-semibold text-body">Type</label>
-            <div className="mb-3 grid grid-cols-3 gap-1.5">
-              {COLUMN_TYPES.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setType(t)}
-                  className={`flex flex-col items-center gap-1 rounded-lg border px-1.5 py-2 text-[11px] transition ${
-                    type === t
-                      ? "border-teal bg-teal/5 text-teal"
-                      : "border-hair text-muted hover:border-teal/50"
-                  }`}
-                >
-                  <span className="font-mono text-sm">{COLUMN_TYPE_META[t].icon}</span>
-                  {COLUMN_TYPE_META[t].label}
-                </button>
-              ))}
-            </div>
-
-            {/* connection config */}
-            {type === "connection" && (
-              <div className="mb-3">
-                <label className="mb-1 block text-xs font-semibold text-body">Connect to board</label>
-                {allBoards.length === 0 ? (
-                  <p className="text-xs text-muted">No other boards to connect to.</p>
-                ) : (
-                  <select
-                    value={targetBoardId}
-                    onChange={(e) => setTargetBoardId(e.target.value)}
-                    className="w-full rounded-lg border border-hair px-2.5 py-2 text-sm outline-none focus:border-teal"
-                  >
-                    {allBoards.map((b) => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-            )}
-
-            {/* mirror config */}
-            {type === "mirror" && (
-              <div className="mb-3 grid gap-2">
-                {connectionColumns.length === 0 ? (
-                  <p className="text-xs text-muted">
-                    Add a <b>Connect Board</b> column first, then mirror a field from it.
-                  </p>
-                ) : (
-                  <>
-                    <div>
-                      <label className="mb-1 block text-xs font-semibold text-body">Via connection</label>
-                      <select
-                        value={connColId}
-                        onChange={(e) => {
-                          setConnColId(e.target.value);
-                          setSourceColId("");
-                        }}
-                        className="w-full rounded-lg border border-hair px-2.5 py-2 text-sm outline-none focus:border-teal"
-                      >
-                        {connectionColumns.map((c) => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs font-semibold text-body">Mirror field</label>
-                      <select
-                        value={sourceColId}
-                        onChange={(e) => setSourceColId(e.target.value)}
-                        className="w-full rounded-lg border border-hair px-2.5 py-2 text-sm outline-none focus:border-teal"
-                      >
-                        <option value="">— select —</option>
-                        {mirrorSourceCols.map((c) => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setOpen(false)} className="rounded-lg px-3 py-1.5 text-xs text-muted hover:bg-canvas">
-                Cancel
-              </button>
-              <button
-                onClick={submit}
-                className="rounded-lg bg-teal px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-deep"
-              >
-                Add column
-              </button>
-            </div>
-          </div>
-        </>
+    <DropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      width={288}
+      maxHeight={480}
+      align="right"
+      trigger={(p) => (
+        <button
+          ref={p.ref}
+          onClick={p.onClick}
+          aria-expanded={p["aria-expanded"]}
+          aria-haspopup={p["aria-haspopup"]}
+          className="rounded-lg bg-teal px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-deep"
+        >
+          + Column
+        </button>
       )}
-    </div>
+      panelClassName="rounded-xl border border-hair bg-white p-3 shadow-pop overflow-y-auto scroll-thin"
+    >
+      <label className="mb-1 block text-xs font-semibold text-body">Name</label>
+      <input
+        autoFocus
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Column name"
+        className="mb-3 w-full rounded-lg border border-hair px-2.5 py-2 text-sm outline-none focus:border-teal"
+      />
+      <label className="mb-1.5 block text-xs font-semibold text-body">Type</label>
+      <div className="mb-3 grid grid-cols-3 gap-1.5">
+        {COLUMN_TYPES.map((t) => (
+          <button
+            key={t}
+            onClick={() => setType(t)}
+            className={`flex flex-col items-center gap-1 rounded-lg border px-1.5 py-2 text-[11px] transition ${
+              type === t
+                ? "border-teal bg-teal/5 text-teal"
+                : "border-hair text-muted hover:border-teal/50"
+            }`}
+          >
+            <span className="font-mono text-sm">{COLUMN_TYPE_META[t].icon}</span>
+            {COLUMN_TYPE_META[t].label}
+          </button>
+        ))}
+      </div>
+
+      {/* connection config */}
+      {type === "connection" && (
+        <div className="mb-3">
+          <label className="mb-1 block text-xs font-semibold text-body">Connect to board</label>
+          {allBoards.length === 0 ? (
+            <p className="text-xs text-muted">No other boards to connect to.</p>
+          ) : (
+            <select
+              value={targetBoardId}
+              onChange={(e) => setTargetBoardId(e.target.value)}
+              className="w-full rounded-lg border border-hair px-2.5 py-2 text-sm outline-none focus:border-teal"
+            >
+              {allBoards.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
+
+      {/* mirror config */}
+      {type === "mirror" && (
+        <div className="mb-3 grid gap-2">
+          {connectionColumns.length === 0 ? (
+            <p className="text-xs text-muted">
+              Add a <b>Connect Board</b> column first, then mirror a field from it.
+            </p>
+          ) : (
+            <>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-body">Via connection</label>
+                <select
+                  value={connColId}
+                  onChange={(e) => {
+                    setConnColId(e.target.value);
+                    setSourceColId("");
+                  }}
+                  className="w-full rounded-lg border border-hair px-2.5 py-2 text-sm outline-none focus:border-teal"
+                >
+                  {connectionColumns.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-body">Mirror field</label>
+                <select
+                  value={sourceColId}
+                  onChange={(e) => setSourceColId(e.target.value)}
+                  className="w-full rounded-lg border border-hair px-2.5 py-2 text-sm outline-none focus:border-teal"
+                >
+                  <option value="">— select —</option>
+                  {mirrorSourceCols.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      <div className="flex justify-end gap-2">
+        <button onClick={() => setOpen(false)} className="rounded-lg px-3 py-1.5 text-xs text-muted hover:bg-canvas">
+          Cancel
+        </button>
+        <button
+          onClick={submit}
+          className="rounded-lg bg-teal px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-deep"
+        >
+          Add column
+        </button>
+      </div>
+    </DropdownMenu>
   );
 }

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireEditor } from "@/lib/guard";
+import { requireBoardEditor } from "@/lib/guard";
 import { runAutomations } from "@/lib/automation";
 import { sendMail, mailerConfigured } from "@/lib/mailer";
 import { resolveOrCreateItem } from "@/lib/subitems";
@@ -20,7 +20,7 @@ export async function saveFormConfig(
     welcomeMessage?: string;
   }
 ) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   // Give the form a short shareable slug the first time it's enabled.
   let slug: string | undefined;
   if (cfg.enabled) {
@@ -82,7 +82,7 @@ async function freshSlug(): Promise<string | undefined> {
 }
 
 export async function createForm(boardId: string, title: string) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   const count = await db.form.count({ where: { boardId } });
   const slug = await freshSlug();
   const form = await db.form.create({
@@ -92,13 +92,18 @@ export async function createForm(boardId: string, title: string) {
   return form.id;
 }
 
+// formId-keyed actions below: the form's real boardId is looked up first
+// (an id-to-id mapping, no sensitive data exposed by the lookup itself),
+// then requireBoardEditor verifies the caller may actually edit THAT board
+// — closes the gap where an editor of one board could edit/delete forms
+// belonging to another org's board just by knowing/guessing a formId.
 export async function updateForm(
   formId: string,
   data: { title: string; desc: string; enabled: boolean; config: FormCfg }
 ) {
-  await requireEditor();
   const form = await db.form.findUnique({ where: { id: formId }, select: { boardId: true, slug: true } });
   if (!form) return;
+  await requireBoardEditor(form.boardId);
   const slug = form.slug ?? (await freshSlug());
   await db.form.update({
     where: { id: formId },
@@ -114,18 +119,18 @@ export async function updateForm(
 }
 
 export async function deleteForm(formId: string) {
-  await requireEditor();
   const form = await db.form.findUnique({ where: { id: formId }, select: { boardId: true } });
   if (!form) return;
+  await requireBoardEditor(form.boardId);
   await db.form.delete({ where: { id: formId } });
   revalidatePath(`/boards/${form.boardId}`);
 }
 
 // Generate a fresh shortened public URL (/f/<slug>) for a form (Missing #3).
 export async function regenerateFormSlug(formId: string): Promise<string | null> {
-  await requireEditor();
   const form = await db.form.findUnique({ where: { id: formId }, select: { boardId: true } });
   if (!form) return null;
+  await requireBoardEditor(form.boardId);
   const slug = await freshSlug();
   if (!slug) return null;
   await db.form.update({ where: { id: formId }, data: { slug } });
@@ -136,7 +141,9 @@ export async function regenerateFormSlug(formId: string): Promise<string | null>
 // Set a custom, branded shortened URL for a form (Additional #1 + Improvement #3).
 export type SlugResult = { ok: boolean; slug?: string; error?: string };
 export async function setFormSlug(formId: string, raw: string): Promise<SlugResult> {
-  await requireEditor();
+  const form = await db.form.findUnique({ where: { id: formId }, select: { boardId: true } });
+  if (!form) return { ok: false, error: "Form not found." };
+  await requireBoardEditor(form.boardId);
   const slug = raw
     .trim()
     .toLowerCase()
@@ -145,8 +152,6 @@ export async function setFormSlug(formId: string, raw: string): Promise<SlugResu
     .replace(/^-|-$/g, "");
   if (slug.length < 3) return { ok: false, error: "Use at least 3 characters (letters, numbers, hyphens)." };
   if (slug.length > 40) return { ok: false, error: "Keep it under 40 characters." };
-  const form = await db.form.findUnique({ where: { id: formId }, select: { boardId: true } });
-  if (!form) return { ok: false, error: "Form not found." };
   const [boardClash, formClash] = await Promise.all([
     db.board.findUnique({ where: { formSlug: slug }, select: { id: true } }),
     db.form.findFirst({ where: { slug, NOT: { id: formId } }, select: { id: true } }),

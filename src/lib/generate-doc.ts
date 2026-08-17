@@ -4,7 +4,7 @@ import { renderDocumentHtml, buildBlocks, type DocValue } from "@/lib/docgen";
 import type { StatusLabel } from "@/lib/constants";
 import { urlDisplay, parseFileValue, type FileValue } from "@/lib/cell-values";
 import { putFile, fetchFileBuffer } from "@/lib/blob-storage";
-import { fillDocx, DOCX_MIME, SUBITEMS_LOOP_TAG, type DocxFillValue } from "@/lib/docx-fill";
+import { fillDocx, DOCX_MIME, SUBITEMS_LOOP_TAG, ITEM_TABLE_LOOP_TAG, type DocxFillValue } from "@/lib/docx-fill";
 import { resolveColumnBySlug, slugifyColumnName, ITEM_NAME_SLUG } from "@/lib/placeholders";
 import { convertDocxToPdf, cloudconvertConfigured } from "@/lib/cloudconvert";
 import type { Prisma } from "@/generated/prisma/client";
@@ -176,20 +176,46 @@ async function resolveSubitemRowsForItem(
   });
 }
 
+// Resolve item-table rows for the {{#item_fields}} table loop (Item tables —
+// client requirement): one row per SELECTED column of the CURRENT item, as
+// a Field | Value pair (e.g. "Email" -> "jane@x.com") — unlike subitem
+// tables, this is not a table of related records, so it just reads from the
+// item's own already-resolved `values` map (resolveItemValues) rather than
+// requerying the DB. `itemTableColumns` (board column names, in order)
+// picks which fields appear — empty means "all eligible columns" so a
+// template still works before the user configures a subset.
+function resolveItemTableRows(
+  boardColumns: { id: string; name: string; type: string }[],
+  values: Record<string, DocValue>,
+  itemTableColumns: string[]
+): Record<string, string>[] {
+  const eligibleTypes = new Set(["text", "longtext", "status", "person", "date", "number", "email", "phone", "url", "mirror"]);
+  const cols = boardColumns.filter((c) => eligibleTypes.has(c.type));
+  const chosen = itemTableColumns.length ? cols.filter((c) => itemTableColumns.includes(c.name)) : cols;
+
+  return chosen.map((col) => {
+    const v = values[col.name];
+    const text = v && "text" in v ? v.text ?? "" : "";
+    return { field: col.name, value: text };
+  });
+}
+
 // Build the flat { placeholder -> filled text } map docxtemplater needs,
 // given a docx template's detected placeholders/mapping and an item's
 // resolved values. Shared by real generation and previews — the SAME
 // resolution order (explicit mapping -> exact column name -> {{item}} ->
 // deterministic slug fallback) that the placeholder reference UI guarantees
-// (see placeholders.ts / Improvement 2). Also injects the "subitems" loop
-// array (Subitem tables — client requirement) when the template uses it.
+// (see placeholders.ts / Improvement 2). Also injects the "subitems" and/or
+// "item_fields" loop arrays (Subitem tables / Item tables — client
+// requirements) when the template uses them.
 function buildDocxFillData(
   itemName: string,
   boardColumns: { id: string; name: string; type: string }[],
   placeholders: string[],
   mapping: Record<string, string>,
   values: Record<string, DocValue>,
-  subitemRows?: Record<string, string>[]
+  subitemRows?: Record<string, string>[],
+  itemTableRows?: Record<string, string>[]
 ): Record<string, DocxFillValue> {
   const textOf = (colName: string): string => {
     if (!colName) return "";
@@ -223,6 +249,7 @@ function buildDocxFillData(
     }
   }
   if (subitemRows) data[SUBITEMS_LOOP_TAG] = subitemRows;
+  if (itemTableRows) data[ITEM_TABLE_LOOP_TAG] = itemTableRows;
   return data;
 }
 
@@ -256,6 +283,7 @@ export async function generateDocumentCoreDetailed(
     let placeholders: string[] = [];
     let mapping: Record<string, string> = {};
     let subitemColumns: string[] = [];
+    let itemTableColumns: string[] = [];
     try {
       placeholders = JSON.parse(template.placeholders);
     } catch {}
@@ -265,10 +293,16 @@ export async function generateDocumentCoreDetailed(
     try {
       subitemColumns = JSON.parse(template.subitemColumns);
     } catch {}
+    try {
+      itemTableColumns = JSON.parse(template.itemTableColumns);
+    } catch {}
     const subitemRows = template.hasSubitemsLoop
       ? await resolveSubitemRowsForItem(item.subitems, item.board.columns, subitemColumns)
       : undefined;
-    const data = buildDocxFillData(item.name, item.board.columns, placeholders, mapping, values, subitemRows);
+    const itemTableRows = template.hasItemTableLoop
+      ? resolveItemTableRows(item.board.columns, values, itemTableColumns)
+      : undefined;
+    const data = buildDocxFillData(item.name, item.board.columns, placeholders, mapping, values, subitemRows, itemTableRows);
 
     let outBuf: Buffer;
     try {
@@ -378,6 +412,7 @@ export async function renderTemplatePreview(itemId: string, templateId: string):
   let placeholders: string[] = [];
   let mapping: Record<string, string> = {};
   let subitemColumns: string[] = [];
+  let itemTableColumns: string[] = [];
   try {
     placeholders = JSON.parse(template.placeholders);
   } catch {}
@@ -387,10 +422,16 @@ export async function renderTemplatePreview(itemId: string, templateId: string):
   try {
     subitemColumns = JSON.parse(template.subitemColumns);
   } catch {}
+  try {
+    itemTableColumns = JSON.parse(template.itemTableColumns);
+  } catch {}
   const subitemRows = template.hasSubitemsLoop
     ? await resolveSubitemRowsForItem(item.subitems, item.board.columns, subitemColumns)
     : undefined;
-  const data = buildDocxFillData(item.name, item.board.columns, placeholders, mapping, values, subitemRows);
+  const itemTableRows = template.hasItemTableLoop
+    ? resolveItemTableRows(item.board.columns, values, itemTableColumns)
+    : undefined;
+  const data = buildDocxFillData(item.name, item.board.columns, placeholders, mapping, values, subitemRows, itemTableRows);
 
   let filledBuf: Buffer;
   try {

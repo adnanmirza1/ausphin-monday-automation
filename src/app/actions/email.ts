@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { permsOf, requireAdmin, requireEditor, requireUser } from "@/lib/guard";
+import { permsOf, requireAdmin, requireUser, requireBoardEditor, requireBoardAccessAsUser } from "@/lib/guard";
 import { sendMail, mailerConfigured, type MailOAuth } from "@/lib/mailer";
 import { googleOAuthConfigured, refreshAccessToken } from "@/lib/google-oauth";
 
@@ -151,15 +151,15 @@ export async function removeConnectedAccount(id: string): Promise<{ ok: boolean;
 export type BoardFile = { columnId: string; columnName: string; name: string; type?: string; url: string };
 
 // Files stored in the item's File-type columns, so the composer can attach them
-// directly without a download round-trip (Additional Request #1). Org-scoped.
-export async function getItemFiles(itemId: string): Promise<BoardFile[]> {
-  const user = await requireUser();
+// directly without a download round-trip (Additional Request #1). Board-scoped.
+export async function getItemFiles(boardId: string, itemId: string): Promise<BoardFile[]> {
+  await requireBoardAccessAsUser(boardId);
   const cells = await db.cell.findMany({
     where: {
       itemId,
       value: { not: null },
       column: { type: "file" },
-      item: { board: { environment: { orgId: user.orgId } } },
+      item: { boardId },
     },
     select: { value: true, column: { select: { id: true, name: true } } },
   });
@@ -316,7 +316,10 @@ export async function sendItemEmail(
   itemId: string,
   input: SendEmailInput
 ): Promise<SendEmailResult> {
-  const user = await requireEditor();
+  const user = await requireBoardEditor(boardId);
+  const item = await db.item.findFirst({ where: { id: itemId, boardId }, select: { id: true } });
+  if (!item)
+    return { ok: false, delivered: false, configured: false, error: "Item not found on this board." };
   const smtpConfigured = mailerConfigured();
   const recipient = input.to.trim();
   const cc = (input.cc ?? "").trim();
@@ -389,7 +392,9 @@ export async function logItemEmail(
   itemId: string,
   data: { direction: "inbound" | "note"; fromEmail: string; subject: string; body: string }
 ): Promise<void> {
-  const user = await requireEditor();
+  const user = await requireBoardEditor(boardId);
+  const item = await db.item.findFirst({ where: { id: itemId, boardId }, select: { id: true } });
+  if (!item) throw new Error("Item not found on this board.");
   if (!data.body.trim() && !data.subject.trim()) return;
   await db.emailMessage.create({
     data: {

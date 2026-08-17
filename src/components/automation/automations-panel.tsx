@@ -12,6 +12,7 @@ import {
   moveAutomation,
 } from "@/app/actions/automation";
 import { listDocuSignTemplates, type DsTemplateRow } from "@/app/actions/docs";
+import { DRAG_OVER_CLASS, DRAGGING_CLASS } from "@/components/ui/popover";
 
 type Col = { id: string; name: string; type: string; labels: StatusLabel[] };
 type Grp = { id: string; name: string; color: string };
@@ -148,58 +149,21 @@ export function AutomationsPanel({
         {automations.length === 0 && <EmptyState onCreate={() => setCreating(true)} />}
 
         {byFolder.map(([folder, list]) => (
-          <div key={folder} className="mb-6">
-            <div className="group mb-2 flex items-center gap-2">
-              <span className="font-mono text-xs">📁</span>
-              <h2 className="text-sm font-bold text-ink">{folder}</h2>
-              <span className="rounded-full bg-canvas px-2 py-0.5 text-xs text-muted">
-                {list.length}
-              </span>
-              <button
-                onClick={() => {
-                  const to = window.prompt(`Rename folder "${folder}" to:`, folder);
-                  if (to && to.trim() && to !== folder)
-                    start(() => void renameFolder(boardId, folder, to));
-                }}
-                className="hidden text-xs text-muted hover:text-teal group-hover:inline"
-              >
-                rename
-              </button>
-            </div>
-            <div
-              className="grid gap-2"
-              onDragOver={(e) => {
-                if (dragId) e.preventDefault();
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                drop(folder, null); // dropped in the folder's empty space → append
-              }}
-            >
-              {list.map((a) => (
-                <AutomationCard
-                  key={a.id}
-                  boardId={boardId}
-                  auto={a}
-                  columns={columns}
-                  groups={groups}
-                  departments={departments}
-                  templates={templates}
-                  onEdit={() => setEditing(a)}
-                  dragging={dragId === a.id}
-                  onDragStart={() => setDragId(a.id)}
-                  onDragEnd={() => setDragId(null)}
-                  onDropBefore={() => drop(folder, a.id)}
-                  dragActive={!!dragId}
-                />
-              ))}
-              {list.length === 0 && (
-                <div className="rounded-lg border border-dashed border-hair px-3 py-4 text-center text-xs text-muted">
-                  Drop an automation here
-                </div>
-              )}
-            </div>
-          </div>
+          <FolderBlock
+            key={folder}
+            boardId={boardId}
+            folder={folder}
+            list={list}
+            columns={columns}
+            groups={groups}
+            departments={departments}
+            templates={templates}
+            dragId={dragId}
+            setEditing={setEditing}
+            setDragId={setDragId}
+            drop={drop}
+            renameFolderStart={(to) => start(() => void renameFolder(boardId, folder, to))}
+          />
         ))}
       </div>
 
@@ -226,6 +190,103 @@ export function AutomationsPanel({
           }}
         />
       )}
+    </div>
+  );
+}
+
+// One folder's card list, with a highlighted drop-zone border while an
+// automation is being dragged over its empty space (matches the teal
+// insertion-line pattern used for group/item/column reorder elsewhere).
+function FolderBlock({
+  boardId,
+  folder,
+  list,
+  columns,
+  groups,
+  departments,
+  templates,
+  dragId,
+  setEditing,
+  setDragId,
+  drop,
+  renameFolderStart,
+}: {
+  boardId: string;
+  folder: string;
+  list: Auto[];
+  columns: Col[];
+  groups: Grp[];
+  departments: Dep[];
+  templates: Tpl[];
+  dragId: string | null;
+  setEditing: (a: Auto) => void;
+  setDragId: (id: string | null) => void;
+  drop: (targetFolder: string, beforeId: string | null) => void;
+  renameFolderStart: (to: string) => void;
+}) {
+  const [over, setOver] = useState(false);
+  return (
+    <div className="mb-6">
+      <div className="group mb-2 flex items-center gap-2">
+        <span className="font-mono text-xs">📁</span>
+        <h2 className="text-sm font-bold text-ink">{folder}</h2>
+        <span className="rounded-full bg-canvas px-2 py-0.5 text-xs text-muted">
+          {list.length}
+        </span>
+        <button
+          onClick={() => {
+            const to = window.prompt(`Rename folder "${folder}" to:`, folder);
+            if (to && to.trim() && to !== folder) renameFolderStart(to);
+          }}
+          className="hidden text-xs text-muted hover:text-teal group-hover:inline"
+        >
+          rename
+        </button>
+      </div>
+      <div
+        className={`grid gap-2 rounded-lg border-2 border-transparent p-0.5 transition ${
+          over ? "border-teal/40 bg-teal/5" : ""
+        }`}
+        onDragOver={(e) => {
+          if (dragId) {
+            e.preventDefault();
+            setOver(true);
+          }
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setOver(false);
+          drop(folder, null); // dropped in the folder's empty space → append
+        }}
+      >
+        {list.map((a) => (
+          <AutomationCard
+            key={a.id}
+            boardId={boardId}
+            auto={a}
+            columns={columns}
+            groups={groups}
+            departments={departments}
+            templates={templates}
+            onEdit={() => setEditing(a)}
+            dragging={dragId === a.id}
+            onDragStart={() => setDragId(a.id)}
+            onDragEnd={() => setDragId(null)}
+            onDropBefore={() => drop(folder, a.id)}
+            dragActive={!!dragId}
+          />
+        ))}
+        {list.length === 0 && (
+          <div
+            className={`rounded-lg border border-dashed px-3 py-4 text-center text-xs transition ${
+              over ? "border-teal text-teal-deep" : "border-hair text-muted"
+            }`}
+          >
+            Drop an automation here
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -348,6 +409,7 @@ function AutomationCard({
   dragActive: boolean;
 }) {
   const [, start] = useTransition();
+  const [over, setOver] = useState(false);
   const { when, then } = describe(auto.trigger, auto.action, columns, groups, departments, templates);
 
   return (
@@ -357,19 +419,27 @@ function AutomationCard({
         e.dataTransfer.effectAllowed = "move";
         onDragStart();
       }}
-      onDragEnd={onDragEnd}
-      onDragOver={(e) => {
-        if (dragActive) e.preventDefault();
+      onDragEnd={() => {
+        setOver(false);
+        onDragEnd();
       }}
+      onDragOver={(e) => {
+        if (dragActive) {
+          e.preventDefault();
+          setOver(true);
+        }
+      }}
+      onDragLeave={() => setOver(false)}
       onDrop={(e) => {
         if (!dragActive) return;
         e.preventDefault();
         e.stopPropagation();
+        setOver(false);
         onDropBefore();
       }}
       className={`flex items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3 shadow-soft transition ${
-        dragging ? "border-teal opacity-50" : "border-hair"
-      } ${auto.enabled ? "" : "opacity-60"}`}
+        dragging ? `border-teal ${DRAGGING_CLASS}` : "border-hair"
+      } ${over && !dragging ? DRAG_OVER_CLASS : ""} ${auto.enabled ? "" : "opacity-60"}`}
     >
       <div className="flex min-w-0 items-center gap-2">
         <span className="flex-none cursor-grab select-none text-muted active:cursor-grabbing" title="Drag to reorder / change folder">

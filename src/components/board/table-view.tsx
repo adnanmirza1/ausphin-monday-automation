@@ -1,7 +1,8 @@
 "use client";
 
-import { createContext, useContext, useRef, useState, useTransition } from "react";
+import { createContext, useContext, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
+import { DropdownMenu, useDismissableMenu, DRAG_OVER_CLASS, DRAGGING_CLASS } from "@/components/ui/popover";
 import type {
   BoardData,
   ColumnData,
@@ -164,37 +165,40 @@ function BulkBar({
       <span className="px-1 text-sm font-semibold text-ink">{ids.length} selected</span>
       <span className="mx-1 h-5 w-px bg-hair" />
 
-      <div className="relative">
-        <button
-          onClick={() => setMoveOpen((o) => !o)}
-          className="rounded-lg px-3 py-1.5 text-sm text-body hover:bg-canvas"
-        >
-          ⇄ Move to
-        </button>
-        {moveOpen && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setMoveOpen(false)} />
-            <div className="absolute bottom-full left-0 z-50 mb-1 w-44 rounded-lg border border-hair bg-white p-1 shadow-pop">
-              {board.groups.map((g) => (
-                <button
-                  key={g.id}
-                  onClick={() => {
-                    setMoveOpen(false);
-                    start(async () => {
-                      await bulkMoveItems(board.id, ids, g.id);
-                      clear();
-                    });
-                  }}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas"
-                >
-                  <span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: g.color }} />
-                  {g.name}
-                </button>
-              ))}
-            </div>
-          </>
+      <DropdownMenu
+        open={moveOpen}
+        onOpenChange={setMoveOpen}
+        width={176}
+        trigger={(p) => (
+          <button
+            ref={p.ref}
+            onClick={p.onClick}
+            aria-expanded={p["aria-expanded"]}
+            aria-haspopup={p["aria-haspopup"]}
+            className="rounded-lg px-3 py-1.5 text-sm text-body hover:bg-canvas"
+          >
+            ⇄ Move to
+          </button>
         )}
-      </div>
+        panelClassName="rounded-lg border border-hair bg-white p-1 shadow-pop overflow-y-auto scroll-thin"
+      >
+        {board.groups.map((g) => (
+          <button
+            key={g.id}
+            onClick={() => {
+              setMoveOpen(false);
+              start(async () => {
+                await bulkMoveItems(board.id, ids, g.id);
+                clear();
+              });
+            }}
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-body hover:bg-canvas"
+          >
+            <span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: g.color }} />
+            {g.name}
+          </button>
+        ))}
+      </DropdownMenu>
 
       <button
         onClick={() => {
@@ -249,6 +253,8 @@ function GroupBlock({
   const [editingName, setEditingName] = useState(false);
   const [name, setName] = useState(group.name);
   const [colorOpen, setColorOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [, start] = useTransition();
   const sel = useSel();
   const rowWidth = NAME_W + board.columns.length * COL_W;
@@ -260,13 +266,20 @@ function GroupBlock({
     <div className="mb-7 animate-rise">
       {/* Group title */}
       <div
-        className="group mb-1.5 flex items-center gap-2"
+        className={`group mb-1.5 flex items-center gap-2 border-t-2 ${
+          dragOver ? "border-t-teal" : "border-t-transparent"
+        } ${dragging ? DRAGGING_CLASS : ""}`}
         style={{ width: rowWidth }}
         onDragOver={(e) => {
-          if (!readOnly) e.preventDefault();
+          if (!readOnly) {
+            e.preventDefault();
+            setDragOver(true);
+          }
         }}
+        onDragLeave={() => setDragOver(false)}
         onDrop={(e) => {
           if (readOnly) return;
+          setDragOver(false);
           const gid = e.dataTransfer.getData("text/group");
           if (gid && gid !== group.id) {
             e.preventDefault();
@@ -280,7 +293,9 @@ function GroupBlock({
             onDragStart={(e) => {
               e.dataTransfer.setData("text/group", group.id);
               e.dataTransfer.effectAllowed = "move";
+              setDragging(true);
             }}
+            onDragEnd={() => setDragging(false)}
             className="hidden cursor-grab select-none text-muted active:cursor-grabbing group-hover:inline"
             title="Drag to reorder group"
           >
@@ -317,33 +332,36 @@ function GroupBlock({
         >
           {collapsed ? "▸" : "▾"}
         </button>
-        <div className="relative">
-          <button
-            disabled={readOnly}
-            onClick={() => setColorOpen((o) => !o)}
-            className="h-5 w-2 rounded-full"
-            style={{ background: group.color }}
-            title="Group color"
-          />
-          {colorOpen && (
-            <>
-              <div className="fixed inset-0 z-20" onClick={() => setColorOpen(false)} />
-              <div className="absolute z-30 mt-1 flex w-44 flex-wrap gap-1.5 rounded-xl border border-hair bg-white p-2 shadow-pop">
-                {PALETTE.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => {
-                      setColorOpen(false);
-                      start(() => void setGroupColor(board.id, group.id, c));
-                    }}
-                    className="h-6 w-6 rounded-md ring-offset-1 hover:ring-2 hover:ring-ink/20"
-                    style={{ background: c }}
-                  />
-                ))}
-              </div>
-            </>
+        <DropdownMenu
+          open={colorOpen}
+          onOpenChange={setColorOpen}
+          width={176}
+          trigger={(p) => (
+            <button
+              ref={p.ref}
+              disabled={readOnly}
+              onClick={p.onClick}
+              aria-expanded={p["aria-expanded"]}
+              aria-haspopup={p["aria-haspopup"]}
+              className="h-5 w-2 rounded-full"
+              style={{ background: group.color }}
+              title="Group color"
+            />
           )}
-        </div>
+          panelClassName="flex flex-wrap gap-1.5 rounded-xl border border-hair bg-white p-2 shadow-pop"
+        >
+          {PALETTE.map((c) => (
+            <button
+              key={c}
+              onClick={() => {
+                setColorOpen(false);
+                start(() => void setGroupColor(board.id, group.id, c));
+              }}
+              className="h-6 w-6 rounded-md ring-offset-1 hover:ring-2 hover:ring-ink/20"
+              style={{ background: c }}
+            />
+          ))}
+        </DropdownMenu>
 
         {editingName ? (
           <input
@@ -574,6 +592,7 @@ function Row({
 }) {
   const [name, setName] = useState(item.name);
   const [over, setOver] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [, start] = useTransition();
   const { open } = useBoardUI();
   const sel = useSel();
@@ -603,7 +622,7 @@ function Row({
       style={tint ? { background: tint } : undefined}
       className={`group flex items-stretch border-b border-hair last:border-b-0 ${
         tint ? "" : "hover:bg-canvas/50"
-      } ${over ? "border-t-2 border-t-teal" : ""}`}
+      } ${over ? DRAG_OVER_CLASS : ""} ${dragging ? DRAGGING_CLASS : ""}`}
     >
       <div
         className={`flex items-center ${pinFirst ? PIN_CLS : ""}`}
@@ -627,7 +646,9 @@ function Row({
             onDragStart={(e) => {
               e.dataTransfer.setData("text/plain", item.id);
               e.dataTransfer.effectAllowed = "move";
+              setDragging(true);
             }}
+            onDragEnd={() => setDragging(false)}
             className="hidden w-4 flex-none cursor-grab select-none text-center text-muted active:cursor-grabbing group-hover:block"
             title="Drag to reorder"
           >
@@ -874,18 +895,22 @@ function ColumnHeader({
   const [descOpen, setDescOpen] = useState(false);
   const [defaultOpen, setDefaultOpen] = useState(false);
   const [name, setName] = useState(column.name);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const { triggerRef: menuBtnRef, panelRef, pos: menuPos, close: closeMenuBase } = useDismissableMenu<HTMLButtonElement>({
+    open: menu,
+    onClose: () => setMenu(false),
+    width: 208,
+    maxHeight: 420,
+  });
   const [, start] = useTransition();
 
   function openMenu() {
-    const r = btnRef.current?.getBoundingClientRect();
-    if (r) setMenuPos({ top: r.bottom + 4, left: r.left + r.width / 2 });
     setSub("main");
     setMenu(true);
   }
   function closeMenu() {
-    setMenu(false);
+    closeMenuBase();
     setSub("main");
   }
   const act = (fn: () => void) => {
@@ -911,12 +936,19 @@ function ColumnHeader({
 
   return (
     <div
-      className="group relative"
+      className={`group relative border-t-2 ${dragOver ? DRAG_OVER_CLASS : "border-t-transparent"} ${
+        dragging ? DRAGGING_CLASS : ""
+      }`}
       onDragOver={(e) => {
-        if (!readOnly) e.preventDefault();
+        if (!readOnly) {
+          e.preventDefault();
+          setDragOver(true);
+        }
       }}
+      onDragLeave={() => setDragOver(false)}
       onDrop={(e) => {
         if (readOnly) return;
+        setDragOver(false);
         const cid = e.dataTransfer.getData("text/column");
         if (cid && cid !== column.id) {
           e.preventDefault();
@@ -925,15 +957,15 @@ function ColumnHeader({
       }}
     >
       <button
-        ref={btnRef}
         disabled={readOnly}
         draggable={!readOnly}
         onDragStart={(e) => {
           e.dataTransfer.setData("text/column", column.id);
           e.dataTransfer.effectAllowed = "move";
+          setDragging(true);
         }}
-        onClick={() => (menu ? closeMenu() : openMenu())}
-        title={column.description || "Click for column options"}
+        onDragEnd={() => setDragging(false)}
+        title={column.description || "Drag to reorder"}
         className="flex w-full cursor-grab items-center justify-center gap-1 px-2 py-2 pr-5 text-xs font-semibold text-muted hover:text-body active:cursor-grabbing"
       >
         <span className="font-mono text-[10px] text-muted/60">{COLUMN_TYPE_META[column.type]?.icon}</span>
@@ -944,23 +976,39 @@ function ColumnHeader({
         )}
         {column.description && <span className="text-muted/60" title={column.description}>ⓘ</span>}
       </button>
+      {/* Separate, non-draggable menu trigger — the drag handle above covers
+          the full header, so this dedicated button (not just a decorative
+          span) is what actually opens the "⋮" menu. Keeps a slow/deliberate
+          click from ever being misread as a drag. */}
       {!readOnly && (
-        <span
-          className={`pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-sm leading-none text-muted transition-opacity ${
+        <button
+          ref={menuBtnRef}
+          type="button"
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (menu) closeMenu();
+            else openMenu();
+          }}
+          aria-expanded={menu}
+          aria-haspopup="menu"
+          title="Column options"
+          className={`absolute right-1 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded text-sm leading-none text-muted transition-opacity hover:bg-canvas hover:text-body ${
             menu ? "opacity-100" : "opacity-0 group-hover:opacity-100"
           }`}
-          title="Column options"
         >
           ⋮
-        </span>
+        </button>
       )}
       {menu && menuPos &&
         createPortal(
           <>
-            <div className="fixed inset-0 z-40" onClick={closeMenu} />
+            <div className="fixed inset-0 z-40" onMouseDown={closeMenu} />
             <div
-              className="fixed z-50 w-52 -translate-x-1/2 rounded-lg border border-hair bg-white p-1 shadow-pop"
-              style={{ top: menuPos.top, left: menuPos.left }}
+              ref={panelRef}
+              className="fixed z-50 w-52 rounded-lg border border-hair bg-white p-1 shadow-pop overflow-y-auto scroll-thin"
+              style={{ top: menuPos.top, left: menuPos.left, maxHeight: menuPos.maxHeight }}
             >
               {sub === "main" ? (
                 <>

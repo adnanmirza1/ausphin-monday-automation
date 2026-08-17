@@ -5,6 +5,7 @@ import type { BoardData, ItemData, PersonLite } from "@/lib/board-types";
 import type { StatusLabel } from "@/lib/constants";
 import { setCell } from "@/app/actions/board";
 import { useBoardUI } from "./board-ui";
+import { DRAGGING_CLASS } from "@/components/ui/popover";
 
 export function KanbanView({
   board,
@@ -146,6 +147,7 @@ function Card({
   readOnly: boolean;
 }) {
   const [, start] = useTransition();
+  const [dragging, setDragging] = useState(false);
   const { open } = useBoardUI();
 
   // Chips: other status columns; avatars: person columns.
@@ -169,10 +171,12 @@ function Card({
       onDragStart={(e) => {
         e.dataTransfer.setData("text/plain", item.id);
         e.dataTransfer.effectAllowed = "move";
+        setDragging(true);
       }}
+      onDragEnd={() => setDragging(false)}
       className={`rounded-lg border border-hair bg-white p-3 shadow-soft transition hover:shadow-pop ${
         readOnly ? "" : "cursor-grab active:cursor-grabbing"
-      }`}
+      } ${dragging ? DRAGGING_CLASS : ""}`}
     >
       <button
         onClick={() => open({ id: item.id, name: item.name })}

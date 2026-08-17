@@ -196,34 +196,34 @@ function ItemPanel({
   }
 
   async function refresh() {
-    setUpdates(await getItemUpdates(item.id));
+    setUpdates(await getItemUpdates(boardId, item.id));
   }
   useEffect(() => {
     // Panel state resets on item switch via `key={selected.id}` (remount), so
     // the effect only needs to (re)load this item's data.
-    getItemUpdates(item.id).then(setUpdates);
-    getItemDocs(item.id).then(setDocs);
+    getItemUpdates(boardId, item.id).then(setUpdates);
+    getItemDocs(boardId, item.id).then(setDocs);
     getItemEnvelopes(item.id).then(setEnvelopes).catch(() => setEnvelopes([]));
-    getItemTags(item.id).then(setTags);
+    getItemTags(boardId, item.id).then(setTags);
     getItemSubitems(item.id).then(setSubitems);
     getItemParent(item.id).then(setParentItem);
     getItemInbox(item.id).then((r) => {
       setEmails(r.emails);
       setEmailTo(r.to);
     });
-  }, [item.id]);
+  }, [boardId, item.id]);
 
   function addTag() {
     if (!tagEmp) return;
     start(async () => {
       await tagCandidate(boardId, item.id, tagEmp, tagStage);
-      setTags(await getItemTags(item.id));
+      setTags(await getItemTags(boardId, item.id));
     });
   }
   function removeTag(tagId: string) {
     start(async () => {
       await untagCandidate(boardId, tagId);
-      setTags(await getItemTags(item.id));
+      setTags(await getItemTags(boardId, item.id));
     });
   }
 
@@ -232,7 +232,7 @@ function ItemPanel({
     setGenMsg(null);
     start(async () => {
       const result = await generateDocumentDetailed(boardId, item.id, genId);
-      setDocs(await getItemDocs(item.id));
+      setDocs(await getItemDocs(boardId, item.id));
       if (result.ok) {
         window.open(`/doc/${result.id}`, "_blank");
       } else {

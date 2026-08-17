@@ -102,3 +102,17 @@ async function requireBoardAccess(user: CurrentUser, boardId: string): Promise<v
   const allowed = allowedBoardIds(user);
   if (allowed && !allowed.includes(boardId)) throw new Error("Board not found.");
 }
+
+// Org-scoped counterpart for actions keyed by environmentId instead of
+// boardId (e.g. creating a board inside a workspace, sorting a workspace's
+// boards) — same "never trust a client-supplied id" principle as
+// requireBoardAccess, one level up the hierarchy.
+export async function requireEnvironmentEditor(environmentId: string): Promise<CurrentUser> {
+  const user = await requireEditor();
+  const env = await db.environment.findUnique({
+    where: { id: environmentId },
+    select: { orgId: true },
+  });
+  if (!env || env.orgId !== user.orgId) throw new Error("Workspace not found.");
+  return user;
+}

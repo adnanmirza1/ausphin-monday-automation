@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireEditor } from "@/lib/guard";
+import { requireBoardEditor } from "@/lib/guard";
 import { runReminders, type ReminderFire } from "@/lib/reminders";
 
 function touch(boardId: string) {
@@ -19,7 +19,7 @@ export type ReminderInput = {
 };
 
 export async function createReminderRule(boardId: string, input: ReminderInput) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   if (!input.dateColumnId) return;
   await db.reminderRule.create({
     data: {
@@ -35,20 +35,20 @@ export async function createReminderRule(boardId: string, input: ReminderInput) 
 }
 
 export async function toggleReminderRule(boardId: string, id: string, enabled: boolean) {
-  await requireEditor();
-  await db.reminderRule.update({ where: { id }, data: { enabled } });
+  await requireBoardEditor(boardId);
+  await db.reminderRule.updateMany({ where: { id, boardId }, data: { enabled } });
   touch(boardId);
 }
 
 export async function deleteReminderRule(boardId: string, id: string) {
-  await requireEditor();
-  await db.reminderRule.delete({ where: { id } });
+  await requireBoardEditor(boardId);
+  await db.reminderRule.deleteMany({ where: { id, boardId } });
   touch(boardId);
 }
 
 // Manual trigger (also used for demo). Returns fired reminders count.
 export async function runRemindersNow(boardId: string): Promise<ReminderFire[]> {
-  const user = await requireEditor();
+  const user = await requireBoardEditor(boardId);
   const fired = await runReminders(user.orgId);
   touch(boardId);
   return fired;

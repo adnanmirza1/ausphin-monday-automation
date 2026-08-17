@@ -14,6 +14,7 @@ import {
   type FileValue,
 } from "@/lib/cell-values";
 import { EmailComposer } from "@/components/board/email-composer";
+import { computePanelPosition } from "@/components/ui/popover";
 
 // ── Input sanitizers (Improvement #6) ────────────────────────────────
 // Numbers: digits, a single decimal point, optional leading minus. No letters.
@@ -1123,7 +1124,11 @@ function SignaturePad({
 /* ── outside-click hook ─────────────────────────────── */
 // Floating dropdown rendered in a body-level portal so it is never clipped by
 // the board card's `overflow-hidden`. Positions itself just below the anchor,
-// flips above when there isn't room, and clamps inside the viewport.
+// flips above when there isn't room, and clamps inside the viewport — thin
+// wrapper around the shared `computePanelPosition` (src/components/ui/popover.tsx)
+// so every cell picker shares the same viewport-clamping math as every other
+// menu in the app, while keeping its externally-supplied-anchorRef API (each
+// cell owns its own trigger button ref) unchanged for all call sites below.
 function FloatingPanel({
   anchorRef,
   onClose,
@@ -1141,19 +1146,8 @@ function FloatingPanel({
   useEffect(() => {
     const el = anchorRef.current;
     if (!el) return;
-    const r = el.getBoundingClientRect();
-    const margin = 8;
-    const below = window.innerHeight - r.bottom - margin;
-    const above = r.top - margin;
-    const openUp = below < 200 && above > below;
-    let left = r.left;
-    if (left + width > window.innerWidth - margin) left = window.innerWidth - width - margin;
-    if (left < margin) left = margin;
-    setPos({
-      top: openUp ? Math.max(margin, r.top - 4) : r.bottom + 4,
-      left,
-      maxH: openUp ? above : below,
-    });
+    const p = computePanelPosition(el.getBoundingClientRect(), { width, preferredMaxHeight: 320 });
+    setPos({ top: p.top, left: p.left, maxH: p.maxHeight });
   }, [anchorRef, width]);
 
   // The board's own content area scrolls independently of the window (see
@@ -1173,13 +1167,17 @@ function FloatingPanel({
     return () => window.removeEventListener("scroll", onScroll, true);
   }, [onClose]);
 
+  // Escape closes + returns focus to the trigger, matching every other menu.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        anchorRef.current?.focus();
+      }
     }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onClose, anchorRef]);
 
   if (!pos) return null;
   return createPortal(

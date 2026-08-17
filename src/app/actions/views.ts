@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireEditor } from "@/lib/guard";
+import { requireBoardEditor } from "@/lib/guard";
 
 function touch(boardId: string) {
   revalidatePath(`/boards/${boardId}`);
@@ -32,7 +32,7 @@ export async function createView(
   config: ViewConfig = {},
   id?: string
 ): Promise<string> {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   const count = await db.boardView.count({ where: { boardId } });
   const view = await db.boardView.create({
     data: {
@@ -49,23 +49,23 @@ export async function createView(
 }
 
 export async function renameView(boardId: string, id: string, name: string) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   const trimmed = name.trim();
   if (!trimmed) return;
-  await db.boardView.update({ where: { id }, data: { name: trimmed } });
+  await db.boardView.updateMany({ where: { id, boardId }, data: { name: trimmed } });
   touch(boardId);
 }
 
 // Persist a view's config (filters/hidden columns, or dashboard widgets).
 export async function updateViewConfig(boardId: string, id: string, config: ViewConfig) {
-  await requireEditor();
-  await db.boardView.update({ where: { id }, data: { config: JSON.stringify(config) } });
+  await requireBoardEditor(boardId);
+  await db.boardView.updateMany({ where: { id, boardId }, data: { config: JSON.stringify(config) } });
   touch(boardId);
 }
 
 // Reorder views to the given id order (persisted).
 export async function reorderViews(boardId: string, orderedIds: string[]) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   await Promise.all(
     orderedIds.map((id, i) =>
       db.boardView.updateMany({ where: { id, boardId }, data: { position: i } })
@@ -75,15 +75,15 @@ export async function reorderViews(boardId: string, orderedIds: string[]) {
 }
 
 export async function deleteView(boardId: string, id: string) {
-  await requireEditor();
-  await db.boardView.delete({ where: { id } });
+  await requireBoardEditor(boardId);
+  await db.boardView.deleteMany({ where: { id, boardId } });
   touch(boardId);
 }
 
 // Pin exactly one view as the board default (or unpin if already pinned).
 export async function pinView(boardId: string, id: string, pinned: boolean) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   await db.boardView.updateMany({ where: { boardId }, data: { isPinned: false } });
-  if (pinned) await db.boardView.update({ where: { id }, data: { isPinned: true } });
+  if (pinned) await db.boardView.updateMany({ where: { id, boardId }, data: { isPinned: true } });
   touch(boardId);
 }

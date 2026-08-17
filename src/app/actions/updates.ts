@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireEditor, requireUser } from "@/lib/guard";
+import { requireBoardEditor, requireBoardAccessAsUser } from "@/lib/guard";
 
 export type UpdateRow = {
   id: string;
@@ -13,10 +13,10 @@ export type UpdateRow = {
   createdAt: string;
 };
 
-export async function getItemUpdates(itemId: string): Promise<UpdateRow[]> {
-  const user = await requireUser();
+export async function getItemUpdates(boardId: string, itemId: string): Promise<UpdateRow[]> {
+  const user = await requireBoardAccessAsUser(boardId);
   const updates = await db.update.findMany({
-    where: { itemId },
+    where: { itemId, item: { boardId } },
     orderBy: { createdAt: "desc" },
     include: { author: true },
   });
@@ -58,7 +58,9 @@ export async function addUpdate(
   body: string,
   mentions: string[]
 ) {
-  const user = await requireEditor();
+  const user = await requireBoardEditor(boardId);
+  const item = await db.item.findFirst({ where: { id: itemId, boardId }, select: { id: true } });
+  if (!item) throw new Error("Item not found on this board.");
   const trimmed = body.trim();
   if (!trimmed) return;
   await db.update.create({

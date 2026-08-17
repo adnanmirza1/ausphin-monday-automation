@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireEditor, requireBoardEditor, requireBoardAccessAsUser, canEditColumn } from "@/lib/guard";
+import { requireBoardEditor, requireBoardAccessAsUser, requireEnvironmentEditor, canEditColumn } from "@/lib/guard";
 import {
   DEFAULT_STATUS_LABELS,
   PALETTE,
@@ -17,28 +17,33 @@ function touch(boardId: string) {
 }
 
 // Merge a patch into a column's JSON config, dropping keys set to undefined.
+// boardId-scoped: the caller has already authorized boardId via
+// requireBoardEditor, so the read+write here must both be constrained to a
+// column that actually belongs to that board — never trust columnId alone.
 async function patchColumnConfig(
+  boardId: string,
   columnId: string,
   patch: Record<string, unknown>
 ) {
-  const col = await db.column.findUnique({ where: { id: columnId } });
+  const col = await db.column.findFirst({ where: { id: columnId, boardId } });
+  if (!col) throw new Error("Column not found on this board.");
   let cfg: Record<string, unknown> = {};
   try {
-    cfg = JSON.parse(col?.config || "{}");
+    cfg = JSON.parse(col.config || "{}");
   } catch {
     cfg = {};
   }
   const next = { ...cfg, ...patch };
   for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
-  await db.column.update({
-    where: { id: columnId },
+  await db.column.updateMany({
+    where: { id: columnId, boardId },
     data: { config: JSON.stringify(next) },
   });
 }
 
 // ── Items ────────────────────────────────────────────────────
 export async function addItem(boardId: string, groupId: string, name: string) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   const trimmed = name.trim();
   if (!trimmed) return;
   const count = await db.item.count({ where: { groupId } });
@@ -75,14 +80,16 @@ export async function addItem(boardId: string, groupId: string, name: string) {
 }
 
 export async function renameItem(boardId: string, itemId: string, name: string) {
-  await requireEditor();
-  await db.item.update({ where: { id: itemId }, data: { name: name.trim() } });
+  await requireBoardEditor(boardId);
+  // Scoped by boardId too: an editor authorized on THIS board must not be
+  // able to rename an itemId that actually belongs to a different board.
+  await db.item.updateMany({ where: { id: itemId, boardId }, data: { name: name.trim() } });
   touch(boardId);
 }
 
 export async function deleteItem(boardId: string, itemId: string) {
-  await requireEditor();
-  await db.item.delete({ where: { id: itemId } });
+  await requireBoardEditor(boardId);
+  await db.item.deleteMany({ where: { id: itemId, boardId } });
   touch(boardId);
 }
 
@@ -144,10 +151,14 @@ export async function moveItemToGroup(
   itemId: string,
   groupId: string
 ) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
+  // groupId must belong to this same board — otherwise an item could be
+  // moved into another board's group by crafting the request.
+  const targetGroup = await db.group.findFirst({ where: { id: groupId, boardId }, select: { id: true } });
+  if (!targetGroup) throw new Error("Group not found on this board.");
   const count = await db.item.count({ where: { groupId } });
-  await db.item.update({
-    where: { id: itemId },
+  await db.item.updateMany({
+    where: { id: itemId, boardId },
     data: { groupId, position: count },
   });
   await runAutomations({ type: "item_moved", boardId, itemId, groupId });
@@ -166,6 +177,8 @@ export async function importItems(
   mapping: string[]
 ) {
   await requireBoardEditor(boardId);
+  const targetGroup = await db.group.findFirst({ where: { id: groupId, boardId }, select: { id: true } });
+  if (!targetGroup) throw new Error("Group not found on this board.");
   const nameIdx = mapping.findIndex((m) => m === "__name__");
   let created = 0;
   let createdAsSubitems = 0;
@@ -197,7 +210,7 @@ export async function importItems(
 
 // Bulk actions on many selected items at once (Part: bulk selection).
 export async function bulkDeleteItems(boardId: string, itemIds: string[]) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   if (itemIds.length === 0) return;
   await db.item.deleteMany({ where: { id: { in: itemIds }, boardId } });
   touch(boardId);
@@ -208,8 +221,10 @@ export async function bulkMoveItems(
   itemIds: string[],
   groupId: string
 ) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   if (itemIds.length === 0) return;
+  const targetGroup = await db.group.findFirst({ where: { id: groupId, boardId }, select: { id: true } });
+  if (!targetGroup) throw new Error("Group not found on this board.");
   // Only fire the "item moved to group" trigger for items whose group actually
   // changes — matches the single-item move path so bulk moves run automations.
   const before = await db.item.findMany({
@@ -218,8 +233,8 @@ export async function bulkMoveItems(
   });
   const changed = new Set(before.filter((i) => i.groupId !== groupId).map((i) => i.id));
   let count = await db.item.count({ where: { groupId } });
-  for (const id of itemIds) {
-    await db.item.update({ where: { id }, data: { groupId, position: count++ } });
+  for (const it of before) {
+    await db.item.update({ where: { id: it.id }, data: { groupId, position: count++ } });
   }
   for (const id of changed) {
     await runAutomations({ type: "item_moved", boardId, itemId: id, groupId });
@@ -235,10 +250,13 @@ export async function reorderItem(
   targetGroupId: string,
   beforeItemId: string | null
 ) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   if (itemId === beforeItemId) return;
 
-  const moved = await db.item.findUnique({ where: { id: itemId }, select: { groupId: true } });
+  const targetGroup = await db.group.findFirst({ where: { id: targetGroupId, boardId }, select: { id: true } });
+  if (!targetGroup) throw new Error("Group not found on this board.");
+  const moved = await db.item.findFirst({ where: { id: itemId, boardId }, select: { groupId: true } });
+  if (!moved) throw new Error("Item not found on this board.");
 
   const existing = await db.item.findMany({
     where: { groupId: targetGroupId },
@@ -255,7 +273,7 @@ export async function reorderItem(
       data: { position: i, ...(ids[i] === itemId ? { groupId: targetGroupId } : {}) },
     });
   }
-  if (moved && moved.groupId !== targetGroupId)
+  if (moved.groupId !== targetGroupId)
     await runAutomations({ type: "item_moved", boardId, itemId, groupId: targetGroupId });
   touch(boardId);
 }
@@ -267,17 +285,20 @@ export async function setCell(
   columnId: string,
   value: string | null
 ) {
-  const user = await requireEditor();
-  const column = await db.column.findUnique({ where: { id: columnId } });
-  if (column && !canEditColumn(user, column.config))
+  const user = await requireBoardEditor(boardId);
+  const column = await db.column.findFirst({ where: { id: columnId, boardId } });
+  if (!column) throw new Error("Column not found on this board.");
+  if (!canEditColumn(user, column.config))
     throw new Error("You don't have permission to edit this column.");
+  const item = await db.item.findFirst({ where: { id: itemId, boardId }, select: { id: true } });
+  if (!item) throw new Error("Item not found on this board.");
   await db.cell.upsert({
     where: { itemId_columnId: { itemId, columnId } },
     create: { itemId, columnId, value },
     update: { value },
   });
   // Fire status-change automations when a status column changes.
-  if (column?.type === "status") {
+  if (column.type === "status") {
     await runAutomations({ type: "status_changes", boardId, itemId, columnId, value });
   }
   // Generic column-changed trigger (any column).
@@ -291,10 +312,13 @@ export async function setPersonCell(
   columnId: string,
   personId: string | null
 ) {
-  const user = await requireEditor();
-  const column = await db.column.findUnique({ where: { id: columnId } });
-  if (column && !canEditColumn(user, column.config))
+  const user = await requireBoardEditor(boardId);
+  const column = await db.column.findFirst({ where: { id: columnId, boardId } });
+  if (!column) throw new Error("Column not found on this board.");
+  if (!canEditColumn(user, column.config))
     throw new Error("You don't have permission to edit this column.");
+  const item = await db.item.findFirst({ where: { id: itemId, boardId }, select: { id: true } });
+  if (!item) throw new Error("Item not found on this board.");
   await db.cell.upsert({
     where: { itemId_columnId: { itemId, columnId } },
     create: { itemId, columnId, personId, value: personId },
@@ -314,7 +338,7 @@ export async function setColumnPermission(
     | "admins"
     | { roles: string[]; departments: string[]; users: string[] }
 ) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   let value: unknown;
   if (edit === "all") value = undefined;
   else if (edit === "admins") value = "admins";
@@ -327,13 +351,13 @@ export async function setColumnPermission(
     const empty = !clean.roles.length && !clean.departments.length && !clean.users.length;
     value = empty ? undefined : clean;
   }
-  await patchColumnConfig(columnId, { edit: value });
+  await patchColumnConfig(boardId, columnId, { edit: value });
   touch(boardId);
 }
 
 // ── Groups ───────────────────────────────────────────────────
 export async function addGroup(boardId: string, name: string) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   const count = await db.group.count({ where: { boardId } });
   await db.group.create({
     data: { boardId, name: name.trim() || "New Group", position: count },
@@ -342,8 +366,8 @@ export async function addGroup(boardId: string, name: string) {
 }
 
 export async function renameGroup(boardId: string, groupId: string, name: string) {
-  await requireEditor();
-  await db.group.update({ where: { id: groupId }, data: { name: name.trim() } });
+  await requireBoardEditor(boardId);
+  await db.group.updateMany({ where: { id: groupId, boardId }, data: { name: name.trim() } });
   touch(boardId);
 }
 
@@ -352,14 +376,14 @@ export async function setGroupColor(
   groupId: string,
   color: string
 ) {
-  await requireEditor();
-  await db.group.update({ where: { id: groupId }, data: { color } });
+  await requireBoardEditor(boardId);
+  await db.group.updateMany({ where: { id: groupId, boardId }, data: { color } });
   touch(boardId);
 }
 
 export async function deleteGroup(boardId: string, groupId: string) {
-  await requireEditor();
-  await db.group.delete({ where: { id: groupId } });
+  await requireBoardEditor(boardId);
+  await db.group.deleteMany({ where: { id: groupId, boardId } });
   touch(boardId);
 }
 
@@ -369,7 +393,7 @@ export async function reorderGroup(
   groupId: string,
   beforeGroupId: string | null
 ) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   if (groupId === beforeGroupId) return;
   const existing = await db.group.findMany({
     where: { boardId },
@@ -388,7 +412,7 @@ export async function reorderGroup(
 // One-click reorder for the ▲▼ buttons — swap a group with its immediate
 // neighbor instead of requiring drag-and-drop.
 export async function moveGroup(boardId: string, groupId: string, direction: "up" | "down") {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   const groups = await db.group.findMany({
     where: { boardId },
     orderBy: { position: "asc" },
@@ -412,7 +436,7 @@ export async function addColumn(
   extraConfig?: Record<string, unknown>,
   afterColumnId?: string
 ) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   const count = await db.column.count({ where: { boardId } });
   let config = "{}";
   if (type === "status") config = JSON.stringify({ labels: DEFAULT_STATUS_LABELS });
@@ -421,7 +445,7 @@ export async function addColumn(
   // Insert right after `afterColumnId` (shifting later columns), else append.
   let position = count;
   if (afterColumnId) {
-    const after = await db.column.findUnique({ where: { id: afterColumnId } });
+    const after = await db.column.findFirst({ where: { id: afterColumnId, boardId } });
     if (after) {
       position = after.position + 1;
       await db.column.updateMany({
@@ -438,8 +462,8 @@ export async function addColumn(
 
 // Copy a column (name + type + config, not cell values) directly to its right.
 export async function duplicateColumn(boardId: string, columnId: string) {
-  await requireEditor();
-  const col = await db.column.findUnique({ where: { id: columnId } });
+  await requireBoardEditor(boardId);
+  const col = await db.column.findFirst({ where: { id: columnId, boardId } });
   if (!col) return;
   await db.column.updateMany({
     where: { boardId, position: { gt: col.position } },
@@ -462,8 +486,8 @@ export async function setColumnDescription(
   columnId: string,
   description: string
 ) {
-  await requireEditor();
-  await patchColumnConfig(columnId, { description: description.trim() || undefined });
+  await requireBoardEditor(boardId);
+  await patchColumnConfig(boardId, columnId, { description: description.trim() || undefined });
   touch(boardId);
 }
 
@@ -472,8 +496,8 @@ export async function setColumnRequired(
   columnId: string,
   required: boolean
 ) {
-  await requireEditor();
-  await patchColumnConfig(columnId, { required: required || undefined });
+  await requireBoardEditor(boardId);
+  await patchColumnConfig(boardId, columnId, { required: required || undefined });
   touch(boardId);
 }
 
@@ -482,8 +506,8 @@ export async function setColumnDefault(
   columnId: string,
   value: string | null
 ) {
-  await requireEditor();
-  await patchColumnConfig(columnId, { defaultValue: value || undefined });
+  await requireBoardEditor(boardId);
+  await patchColumnConfig(boardId, columnId, { defaultValue: value || undefined });
   touch(boardId);
 }
 
@@ -495,8 +519,8 @@ export async function sortItemsByColumn(
   columnId: string,
   dir: "asc" | "desc"
 ) {
-  await requireEditor();
-  const col = await db.column.findUnique({ where: { id: columnId } });
+  await requireBoardEditor(boardId);
+  const col = await db.column.findFirst({ where: { id: columnId, boardId } });
   if (!col) return;
 
   const labelOrder: Record<string, number> = {};
@@ -548,14 +572,14 @@ export async function renameColumn(
   columnId: string,
   name: string
 ) {
-  await requireEditor();
-  await db.column.update({ where: { id: columnId }, data: { name: name.trim() } });
+  await requireBoardEditor(boardId);
+  await db.column.updateMany({ where: { id: columnId, boardId }, data: { name: name.trim() } });
   touch(boardId);
 }
 
 export async function deleteColumn(boardId: string, columnId: string) {
-  await requireEditor();
-  await db.column.delete({ where: { id: columnId } });
+  await requireBoardEditor(boardId);
+  await db.column.deleteMany({ where: { id: columnId, boardId } });
   touch(boardId);
 }
 
@@ -565,7 +589,7 @@ export async function reorderColumn(
   columnId: string,
   beforeColumnId: string | null
 ) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   if (columnId === beforeColumnId) return;
   const existing = await db.column.findMany({
     where: { boardId },
@@ -586,8 +610,8 @@ export async function setColumnLabels(
   columnId: string,
   labels: { id: string; label: string; color: string }[]
 ) {
-  await requireEditor();
-  await patchColumnConfig(columnId, { labels });
+  await requireBoardEditor(boardId);
+  await patchColumnConfig(boardId, columnId, { labels });
   touch(boardId);
 }
 
@@ -601,11 +625,11 @@ export async function addStatusLabel(
   label: string,
   color?: string
 ) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   const trimmed = label.trim();
   if (!trimmed) return;
 
-  const column = await db.column.findUnique({ where: { id: columnId } });
+  const column = await db.column.findFirst({ where: { id: columnId, boardId } });
   if (!column || column.type !== "status") return;
 
   let cfg: { labels?: StatusLabel[] } = {};
@@ -626,13 +650,15 @@ export async function addStatusLabel(
     labelId = `l${Math.random().toString(36).slice(2, 8)}`;
     const newColor = color || PALETTE[labels.length % PALETTE.length];
     labels.push({ id: labelId, label: trimmed, color: newColor });
-    await db.column.update({
-      where: { id: columnId },
+    await db.column.updateMany({
+      where: { id: columnId, boardId },
       data: { config: JSON.stringify({ ...cfg, labels }) },
     });
   }
 
   if (itemId) {
+    const item = await db.item.findFirst({ where: { id: itemId, boardId }, select: { id: true } });
+    if (!item) return;
     await db.cell.upsert({
       where: { itemId_columnId: { itemId, columnId } },
       create: { itemId, columnId, value: labelId },
@@ -651,7 +677,7 @@ export async function addStatusLabel(
 
 // ── Boards ───────────────────────────────────────────────────
 export async function renameBoard(boardId: string, name: string) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   await db.board.update({ where: { id: boardId }, data: { name: name.trim() } });
   touch(boardId);
   revalidatePath("/", "layout");
@@ -670,27 +696,29 @@ export async function setItemColumnName(boardId: string, name: string) {
 
 // Soft-delete → moves to Archive/Trash (restorable).
 export async function archiveBoard(boardId: string) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   await db.board.update({ where: { id: boardId }, data: { archivedAt: new Date() } });
   revalidatePath("/", "layout");
 }
 
 export async function restoreBoard(boardId: string) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   await db.board.update({ where: { id: boardId }, data: { archivedAt: null } });
   revalidatePath("/", "layout");
 }
 
 // Permanent delete (from Archive/Trash) — irreversible, cascades to all board data.
 export async function deleteBoard(boardId: string) {
-  await requireEditor();
+  await requireBoardEditor(boardId);
   await db.board.delete({ where: { id: boardId } });
   revalidatePath("/", "layout");
 }
 
 // Sort a workspace's boards alphabetically (A–Z) by rewriting their positions.
+// environmentId-scoped: requireEnvironmentEditor verifies the workspace
+// belongs to the caller's org before any board in it is touched.
 export async function sortBoards(environmentId: string) {
-  await requireEditor();
+  await requireEnvironmentEditor(environmentId);
   const boards = await db.board.findMany({
     where: { environmentId },
     select: { id: true, name: true },
@@ -703,7 +731,7 @@ export async function sortBoards(environmentId: string) {
 }
 
 export async function addBoard(environmentId: string, name: string) {
-  const user = await requireEditor();
+  const user = await requireEnvironmentEditor(environmentId);
   const count = await db.board.count({ where: { environmentId } });
   const board = await db.board.create({
     data: {
