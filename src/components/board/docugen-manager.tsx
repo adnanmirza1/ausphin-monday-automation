@@ -152,7 +152,7 @@ function DocuGenModal({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 flex h-[85vh] w-full max-w-4xl flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-ink">🗂 DocuGen</h2>
@@ -395,6 +395,21 @@ function PlaceholderConfigTab({ boardId, itemColumnName }: { boardId: string; it
   );
 }
 
+// Left-menu sections inside a template editor, matching the reference
+// DocuGen app's layout the client walked us through: Delivery, Placeholders,
+// Item tables, Subitem tables, Template, Automation, Preview.
+type EditorSection = "delivery" | "placeholders" | "itemTables" | "subitemTables" | "template" | "automation" | "preview";
+
+const SECTION_META: { id: EditorSection; label: string; icon: string }[] = [
+  { id: "delivery", label: "Delivery", icon: "📤" },
+  { id: "placeholders", label: "Placeholders", icon: "🏷" },
+  { id: "itemTables", label: "Item tables", icon: "▦" },
+  { id: "subitemTables", label: "Subitem tables", icon: "▤" },
+  { id: "template", label: "Template", icon: "📄" },
+  { id: "automation", label: "Automation", icon: "⚡" },
+  { id: "preview", label: "Preview", icon: "👁" },
+];
+
 function TemplateEditor({
   boardId,
   itemColumnName,
@@ -412,6 +427,7 @@ function TemplateEditor({
   onBack: () => void;
   onSaved: () => Promise<DocuGenData | void>;
 }) {
+  const [section, setSection] = useState<EditorSection>("delivery");
   const [name, setName] = useState(template.name);
   const [viewName, setViewName] = useState(template.viewName);
   const [reference, setReference] = useState(template.reference);
@@ -421,12 +437,12 @@ function TemplateEditor({
   const [outputFormat, setOutputFormat] = useState(template.outputFormat);
   const [outputColumnId, setOutputColumnId] = useState(template.outputColumnId ?? "");
   const [mapping, setMapping] = useState<Record<string, string>>(template.mapping);
+  const [subitemColumns, setSubitemColumns] = useState<string[]>(template.subitemColumns);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
   const [replacing, setReplacing] = useState(false);
   const [conversionAvailable, setConversionAvailable] = useState<boolean | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     docuGenConversionAvailable().then(setConversionAvailable);
@@ -437,10 +453,17 @@ function TemplateEditor({
   const signaturePlaceholders = template.placeholders.filter(isSignatureAnchor);
   const dataPlaceholders = template.placeholders.filter((p) => !isSignatureAnchor(p));
 
+  // Columns eligible to appear as a subitem-table field (skip types that
+  // don't make sense in a table cell — mirrors resolveSubitemRowsForItem
+  // in generate-doc.ts, the actual fill engine, so this picker never offers
+  // a column the fill engine would ignore).
+  const subitemEligibleTypes = new Set(["text", "longtext", "status", "person", "date", "number", "email", "phone", "url"]);
+  const subitemEligibleColumns = columns.filter((c) => subitemEligibleTypes.has(c.type));
+
   async function save() {
     setSaving(true);
     await saveTemplateMeta(boardId, template.id, {
-      name, viewName, reference, employer, category, folder, mapping, outputFormat,
+      name, viewName, reference, employer, category, folder, mapping, subitemColumns, outputFormat,
       outputColumnId: outputColumnId || null,
     });
     await onSaved();
@@ -474,125 +497,275 @@ function TemplateEditor({
   }
 
   return (
-    <div className="mt-3 flex-1 overflow-auto scroll-thin">
-      <button onClick={onBack} className="mb-3 text-sm text-teal hover:underline">← All templates</button>
-
-      {/* Prominent save/replace confirmation banner */}
-      {msg && (
-        <div className={`mb-3 rounded-lg px-3 py-2 text-sm font-medium ${/fail|error|could not|invalid/i.test(msg) ? "bg-danger/10 text-danger" : "bg-grass/10 text-grass"}`}>
-          {msg}
+    <div className="relative mt-3 flex flex-1 gap-4 overflow-hidden pb-14">
+      {/* Left menu — mirrors the reference DocuGen app's section list */}
+      <div className="w-40 flex-none border-r border-hair pr-3">
+        <button onClick={onBack} className="mb-3 text-xs text-teal hover:underline">← All templates</button>
+        <p className="mb-1.5 truncate text-sm font-bold text-ink" title={template.name}>{template.name}</p>
+        <div className="flex flex-col gap-0.5">
+          {SECTION_META.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setSection(s.id)}
+              className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium ${
+                section === s.id ? "bg-teal/10 text-teal-deep" : "text-body hover:bg-canvas"
+              }`}
+            >
+              <span className="w-4 text-center">{s.icon}</span>
+              {s.label}
+              {s.id === "subitemTables" && template.hasSubitemsLoop && (
+                <span className="ml-auto h-1.5 w-1.5 rounded-full bg-teal" title="This template uses a subitem table" />
+              )}
+              {s.id === "automation" && template.usageCount > 0 && (
+                <span className="ml-auto rounded-full bg-canvas px-1.5 text-[10px] text-muted">{template.usageCount}</span>
+              )}
+            </button>
+          ))}
         </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Template name"><input value={name} onChange={(e) => setName(e.target.value)} className={inp} /></Field>
-        <Field label="Reference (stable ID — used by automations)"><input value={reference} onChange={(e) => setReference(e.target.value)} className={inp} /></Field>
-        <Field label="DocuGen view name / number"><input value={viewName} onChange={(e) => setViewName(e.target.value)} placeholder="e.g. Service Agreement View 001" className={inp} /></Field>
-        <Field label="Employer"><input value={employer} onChange={(e) => setEmployer(e.target.value)} className={inp} /></Field>
-        <Field label="Category / Program"><input value={category} onChange={(e) => setCategory(e.target.value)} className={inp} /></Field>
-        <Field label="Folder"><input value={folder} onChange={(e) => setFolder(e.target.value)} className={inp} /></Field>
-        <Field label="Output format">
-          <select value={outputFormat} onChange={(e) => setOutputFormat(e.target.value)} className={inp}>
-            <option value="docx">DOCX</option>
-            <option value="pdf">PDF{conversionAvailable === false ? " (not yet configured)" : ""}</option>
-          </select>
-        </Field>
-        <Field label="Save generated file to column">
-          <select value={outputColumnId} onChange={(e) => setOutputColumnId(e.target.value)} className={inp}>
-            <option value="">First file column (default)</option>
-            {fileColumns.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
-          </select>
-        </Field>
       </div>
 
-      <div className="mt-4">
-        <div className="mb-1 flex items-center justify-between">
-          <p className="text-xs font-semibold text-body">Placeholder → column mapping ({template.placeholders.length})</p>
-          <div>
-            <button onClick={() => replaceRef.current?.click()} disabled={replacing} className="text-xs text-teal hover:underline disabled:opacity-60">
-              {replacing ? "Replacing…" : "⟳ Replace .docx file"}
-            </button>
-            <input ref={replaceRef} type="file" accept=".docx" onChange={onReplace} className="hidden" />
+      {/* Right content */}
+      <div className="min-w-0 flex-1 overflow-auto scroll-thin pr-1">
+        {msg && (
+          <div className={`mb-3 rounded-lg px-3 py-2 text-sm font-medium ${/fail|error|could not|invalid/i.test(msg) ? "bg-danger/10 text-danger" : "bg-grass/10 text-grass"}`}>
+            {msg}
           </div>
-        </div>
-        {template.placeholders.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-hair px-3 py-3 text-xs text-muted">
-            No {"{{placeholders}}"} found in this .docx. Add some (e.g. {"{{Candidate_Name}}"}) and use ⟳ Replace.
-          </p>
-        ) : (
-          <>
-            <div className="grid gap-1.5">
-              {dataPlaceholders.map((p) => (
-                <div key={p} className="flex items-center gap-2">
-                  <code className="w-1/2 truncate rounded bg-canvas px-2 py-1.5 font-mono text-[11px] text-teal-deep" title={p}>{"{{"}{p}{"}}"}</code>
-                  <span className="text-muted">→</span>
-                  <select
-                    value={mapping[p] ?? ""}
-                    onChange={(e) => setMapping((m) => ({ ...m, [p]: e.target.value }))}
-                    className={`${inp} w-1/2`}
-                  >
-                    <option value="">(unmapped — blank)</option>
-                    <option value="Item">{itemColumnName} name</option>
-                    {columns.map((c) => (<option key={c.id} value={c.name}>{c.name}</option>))}
-                  </select>
-                </div>
-              ))}
-              {dataPlaceholders.length === 0 && (
-                <p className="text-xs text-muted">No data placeholders — only signature fields below.</p>
-              )}
-            </div>
+        )}
 
-            {signaturePlaceholders.length > 0 && (
-              <div className="mt-3 rounded-lg border border-teal/30 bg-teal/5 p-2.5">
-                <p className="mb-1 text-[11px] font-semibold text-teal-deep">
-                  ✍ Signature fields ({signaturePlaceholders.length}) — auto-placed in DocuSign
-                </p>
-                <p className="mb-1.5 text-[10px] text-muted">
-                  These are <b>not</b> data fields. They&rsquo;re kept in the document as-is and turned into
-                  DocuSign signature/date/name/initial fields automatically when sent (the number = the signer).
-                </p>
-                <div className="flex flex-wrap gap-1">
-                  {signaturePlaceholders.map((p) => (
-                    <code key={p} className="rounded bg-white px-2 py-0.5 font-mono text-[11px] text-teal-deep">{"{{"}{p}{"}}"}</code>
+        {section === "delivery" && (
+          <div>
+            <h3 className="mb-1 text-sm font-bold text-ink">Delivery</h3>
+            <p className="mb-3 text-xs text-muted">Choose the file format and where the generated document is delivered.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Output format">
+                <select value={outputFormat} onChange={(e) => setOutputFormat(e.target.value)} className={inp}>
+                  <option value="docx">DOCX</option>
+                  <option value="pdf">PDF{conversionAvailable === false ? " (not yet configured)" : ""}</option>
+                </select>
+              </Field>
+              <Field label="Save generated file to column">
+                <select value={outputColumnId} onChange={(e) => setOutputColumnId(e.target.value)} className={inp}>
+                  <option value="">First file column (default)</option>
+                  {fileColumns.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                </select>
+              </Field>
+            </div>
+            {outputFormat === "pdf" && conversionAvailable === false && (
+              <p className="mt-3 rounded-lg bg-amber/10 px-3 py-2 text-[11px] text-amber">
+                PDF conversion isn&rsquo;t configured yet — documents will be saved as DOCX until it is.
+              </p>
+            )}
+            {fileColumns.length === 0 && (
+              <p className="mt-3 rounded-lg border border-dashed border-hair px-3 py-2 text-[11px] text-muted">
+                No File column on this board yet — add one to store generated documents on the item.
+              </p>
+            )}
+          </div>
+        )}
+
+        {section === "placeholders" && (
+          <div>
+            <h3 className="mb-1 text-sm font-bold text-ink">Placeholder → column mapping ({template.placeholders.length})</h3>
+            <p className="mb-3 text-xs text-muted">
+              Every {"{{placeholder}}"} detected in the uploaded .docx, mapped to the board column that fills it.
+            </p>
+            {template.placeholders.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-hair px-3 py-3 text-xs text-muted">
+                No {"{{placeholders}}"} found in this .docx. Add some (e.g. {"{{Candidate_Name}}"}) and replace the file
+                under <b>Template</b>.
+              </p>
+            ) : (
+              <>
+                <div className="grid gap-1.5">
+                  {dataPlaceholders.map((p) => (
+                    <div key={p} className="flex items-center gap-2">
+                      <code className="w-1/2 truncate rounded bg-canvas px-2 py-1.5 font-mono text-[11px] text-teal-deep" title={p}>{"{{"}{p}{"}}"}</code>
+                      <span className="text-muted">→</span>
+                      <select
+                        value={mapping[p] ?? ""}
+                        onChange={(e) => setMapping((m) => ({ ...m, [p]: e.target.value }))}
+                        className={`${inp} w-1/2`}
+                      >
+                        <option value="">(unmapped — blank)</option>
+                        <option value="Item">{itemColumnName} name</option>
+                        {columns.map((c) => (<option key={c.id} value={c.name}>{c.name}</option>))}
+                      </select>
+                    </div>
                   ))}
+                  {dataPlaceholders.length === 0 && (
+                    <p className="text-xs text-muted">No data placeholders — only signature fields below.</p>
+                  )}
                 </div>
+
+                {signaturePlaceholders.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-teal/30 bg-teal/5 p-2.5">
+                    <p className="mb-1 text-[11px] font-semibold text-teal-deep">
+                      ✍ Signature fields ({signaturePlaceholders.length}) — auto-placed in DocuSign
+                    </p>
+                    <p className="mb-1.5 text-[10px] text-muted">
+                      These are <b>not</b> data fields. They&rsquo;re kept in the document as-is and turned into
+                      DocuSign signature/date/name/initial fields automatically when sent (the number = the signer).
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {signaturePlaceholders.map((p) => (
+                        <code key={p} className="rounded bg-white px-2 py-0.5 font-mono text-[11px] text-teal-deep">{"{{"}{p}{"}}"}</code>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {section === "itemTables" && (
+          <div>
+            <h3 className="mb-1 text-sm font-bold text-ink">Item tables</h3>
+            <p className="mb-3 text-xs text-muted">
+              The board columns available to this template — the same columns shown in the {itemColumnName} table.
+              Use these via the <b>Placeholders</b> section or the board&rsquo;s <b>Configuration</b> tab.
+            </p>
+            <div className="overflow-hidden rounded-lg border border-hair">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-canvas/60 text-muted">
+                  <tr><th className="px-3 py-1.5 font-semibold">Column</th><th className="px-3 py-1.5 font-semibold">Type</th></tr>
+                </thead>
+                <tbody>
+                  {columns.map((c) => (
+                    <tr key={c.id} className="border-t border-hair">
+                      <td className="px-3 py-1.5 text-body">{c.name}</td>
+                      <td className="px-3 py-1.5 text-muted">{c.type}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {section === "subitemTables" && (
+          <div>
+            <h3 className="mb-1 text-sm font-bold text-ink">Subitem tables</h3>
+            <p className="mb-3 text-xs text-muted">
+              Add <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px] text-teal-deep">{"{{#subitems}}"}</code> and{" "}
+              <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px] text-teal-deep">{"{{/subitems}}"}</code> around a
+              table row in the .docx (one in the first cell, the other in the last) to repeat that row once per
+              subitem — e.g. every past endorsement grouped under this {itemColumnName.toLowerCase()}.
+            </p>
+            {!template.hasSubitemsLoop ? (
+              <p className="rounded-lg border border-dashed border-hair px-3 py-3 text-xs text-muted">
+                This template doesn&rsquo;t use a subitem table yet. Add the <code>{"{{#subitems}}"}</code> /
+                <code>{"{{/subitems}}"}</code> tags to your .docx and replace the file under <b>Template</b> — this
+                section will then let you choose which columns fill each row.
+              </p>
+            ) : (
+              <>
+                <p className="mb-2 rounded-lg bg-teal/5 px-3 py-2 text-[11px] font-medium text-teal-deep">
+                  ✓ Subitem table detected. Choose which columns fill each repeated row (leave none checked to
+                  include all eligible columns).
+                </p>
+                <div className="grid gap-1">
+                  {subitemEligibleColumns.map((c) => (
+                    <label key={c.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-body hover:bg-canvas">
+                      <input
+                        type="checkbox"
+                        checked={subitemColumns.includes(c.name)}
+                        onChange={(e) =>
+                          setSubitemColumns((cols) =>
+                            e.target.checked ? [...cols, c.name] : cols.filter((n) => n !== c.name)
+                          )
+                        }
+                      />
+                      {c.name}
+                      <span className="text-[10px] text-muted">({c.type})</span>
+                    </label>
+                  ))}
+                  {subitemEligibleColumns.length === 0 && (
+                    <p className="text-xs text-muted">No eligible columns on this board yet.</p>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {section === "template" && (
+          <div>
+            <h3 className="mb-1 text-sm font-bold text-ink">Template</h3>
+            <p className="mb-3 text-xs text-muted">Details, categorization, and the uploaded .docx file.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Template name"><input value={name} onChange={(e) => setName(e.target.value)} className={inp} /></Field>
+              <Field label="Reference (stable ID — used by automations)"><input value={reference} onChange={(e) => setReference(e.target.value)} className={inp} /></Field>
+              <Field label="DocuGen view name / number"><input value={viewName} onChange={(e) => setViewName(e.target.value)} placeholder="e.g. Service Agreement View 001" className={inp} /></Field>
+              <Field label="Employer"><input value={employer} onChange={(e) => setEmployer(e.target.value)} className={inp} /></Field>
+              <Field label="Category / Program"><input value={category} onChange={(e) => setCategory(e.target.value)} className={inp} /></Field>
+              <Field label="Folder"><input value={folder} onChange={(e) => setFolder(e.target.value)} className={inp} /></Field>
+            </div>
+            <div className="mt-4 flex items-center justify-between rounded-lg border border-hair px-3 py-2.5">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-body">{template.docxName || "No file"}</p>
+                <p className="text-[11px] text-muted">v{template.version}{template.hasSubitemsLoop ? " · subitem table" : ""}</p>
+              </div>
+              <button onClick={() => replaceRef.current?.click()} disabled={replacing} className="flex-none text-xs text-teal hover:underline disabled:opacity-60">
+                {replacing ? "Replacing…" : "⬆ Download / Upload (⟳ Replace .docx)"}
+              </button>
+              <input ref={replaceRef} type="file" accept=".docx" onChange={onReplace} className="hidden" />
+            </div>
+            {template.docxUrl && (
+              <a href={template.docxUrl} target="_blank" rel="noreferrer" className="mt-1.5 inline-block text-[11px] text-teal hover:underline">
+                ⬇ Download current template file
+              </a>
+            )}
+          </div>
+        )}
+
+        {section === "automation" && (
+          <div>
+            <h3 className="mb-1 text-sm font-bold text-ink">Automation</h3>
+            <p className="mb-3 text-xs text-muted">Automations on this board that generate documents from this template.</p>
+            {template.usingAutomations.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-hair px-3 py-3 text-xs text-muted">
+                No automation uses this template yet. Build one from the board&rsquo;s <b>⚡ Automate</b> panel with the
+                &ldquo;Generate document&rdquo; action, and reference <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px]">{reference || template.reference}</code>.
+              </p>
+            ) : (
+              <div className="grid gap-1.5">
+                {template.usingAutomations.map((a) => (
+                  <div key={a.id} className="flex items-center gap-2 rounded-lg border border-hair px-3 py-2 text-sm text-body">
+                    <span>⚡</span>
+                    <span className="truncate">{a.name || "Untitled automation"}</span>
+                  </div>
+                ))}
               </div>
             )}
-          </>
+          </div>
+        )}
+
+        {section === "preview" && (
+          <div className="flex h-full flex-col">
+            <h3 className="mb-1 text-sm font-bold text-ink">Preview</h3>
+            <p className="mb-3 text-xs text-muted">See how this template looks filled in with a real item&rsquo;s data.</p>
+            <div className="min-h-0 flex-1">
+              <TemplatePreviewPane
+                boardId={boardId}
+                templateId={template.id}
+                conversionAvailable={conversionAvailable}
+                disabled={template.placeholders.length === 0}
+              />
+            </div>
+          </div>
         )}
       </div>
 
-      {outputFormat === "pdf" && conversionAvailable === false && (
-        <p className="mt-2 rounded-lg bg-amber/10 px-3 py-2 text-[11px] text-amber">
-          PDF conversion isn&rsquo;t configured yet — documents will be saved as DOCX until it is.
-        </p>
-      )}
-
-      <div className="mt-4 flex items-center justify-between gap-2">
-        <button
-          onClick={() => setPreviewOpen(true)}
-          disabled={template.placeholders.length === 0}
-          className="rounded-lg border border-hair px-3 py-2 text-sm font-medium text-body hover:bg-canvas disabled:opacity-50"
-          title={template.placeholders.length === 0 ? "Upload a template with placeholders first" : "See how this template looks filled in with a real item's data"}
-        >
-          👁 Preview
-        </button>
-        <div className="flex items-center gap-2">
-          <button onClick={onBack} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">Back</button>
-          <button onClick={save} disabled={saving || !name.trim()} className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50">
+      {/* Sticky save bar */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-end border-t border-hair bg-white/95 px-1 py-2.5 backdrop-blur-sm">
+        <div className="pointer-events-auto flex items-center gap-2">
+          <button onClick={onBack} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-canvas">Back</button>
+          <button onClick={save} disabled={saving || !name.trim()} className="rounded-lg bg-teal px-4 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50">
             {saving ? "Saving…" : "Save template"}
           </button>
         </div>
       </div>
-
-      {previewOpen && (
-        <TemplatePreviewModal
-          boardId={boardId}
-          templateId={template.id}
-          conversionAvailable={conversionAvailable}
-          onClose={() => setPreviewOpen(false)}
-        />
-      )}
     </div>
   );
 }
@@ -602,16 +775,18 @@ function TemplateEditor({
 // the exact fill logic "Generate" uses, converted via the same CloudConvert
 // pipeline as real PDF output, so what's previewed matches what generating
 // would produce. No GeneratedDocument row is created; this is look-only.
-function TemplatePreviewModal({
+// Embedded inline in the editor's Preview section (not a separate modal) so
+// it sits alongside Delivery/Placeholders/Item tables/etc. in one place.
+function TemplatePreviewPane({
   boardId,
   templateId,
   conversionAvailable,
-  onClose,
+  disabled,
 }: {
   boardId: string;
   templateId: string;
   conversionAvailable: boolean | null;
-  onClose: () => void;
+  disabled: boolean;
 }) {
   const [items, setItems] = useState<BoardItemLite[] | null>(null);
   const [itemId, setItemId] = useState("");
@@ -637,60 +812,57 @@ function TemplatePreviewModal({
     else setErr(res.error);
   }
 
+  if (disabled) {
+    return (
+      <p className="rounded-lg border border-dashed border-hair px-3 py-3 text-xs text-muted">
+        Upload a .docx with placeholders first — Preview needs at least one to render.
+      </p>
+    );
+  }
+
+  if (conversionAvailable === false) {
+    return (
+      <p className="rounded-lg bg-amber/10 px-4 py-3 text-sm text-amber">
+        Visual preview isn&rsquo;t configured yet — a PDF conversion API key is required to render a real preview.
+      </p>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-[70] grid place-items-center p-4">
-      <div className="absolute inset-0 bg-ink/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 flex h-[85vh] w-full max-w-3xl flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold text-ink">👁 Preview</h2>
-          <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-muted hover:bg-canvas">✕</button>
-        </div>
+    <div className="flex h-full flex-col">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold text-body">Preview with data from:</span>
+        <select
+          value={itemId}
+          onChange={(e) => setItemId(e.target.value)}
+          className="min-w-[200px] flex-1 rounded-lg border border-hair px-2.5 py-1.5 text-sm outline-none focus:border-teal"
+        >
+          {items === null && <option value="">Loading items…</option>}
+          {items?.length === 0 && <option value="">No items on this board</option>}
+          {items?.map((it) => (
+            <option key={it.id} value={it.id}>{it.name}</option>
+          ))}
+        </select>
+        <button
+          onClick={runPreview}
+          disabled={!itemId || loading}
+          className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
+        >
+          {loading ? "Rendering…" : "Render preview"}
+        </button>
+      </div>
 
-        {conversionAvailable === false ? (
-          <div className="mt-4 flex flex-1 items-center justify-center">
-            <p className="max-w-sm rounded-lg bg-amber/10 px-4 py-3 text-center text-sm text-amber">
-              Visual preview isn&rsquo;t configured yet — a PDF conversion API key is required to render a
-              real preview.
-            </p>
-          </div>
+      {err && <p className="mt-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">{err}</p>}
+
+      <div className="mt-3 min-h-[300px] flex-1 overflow-hidden rounded-lg border border-hair bg-canvas/30">
+        {loading ? (
+          <div className="grid h-full place-items-center text-sm text-muted">Rendering preview…</div>
+        ) : dataUrl ? (
+          <iframe src={dataUrl} title="Template preview" className="h-full w-full" />
         ) : (
-          <>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-body">Preview with data from:</span>
-              <select
-                value={itemId}
-                onChange={(e) => setItemId(e.target.value)}
-                className="min-w-[200px] flex-1 rounded-lg border border-hair px-2.5 py-1.5 text-sm outline-none focus:border-teal"
-              >
-                {items === null && <option value="">Loading items…</option>}
-                {items?.length === 0 && <option value="">No items on this board</option>}
-                {items?.map((it) => (
-                  <option key={it.id} value={it.id}>{it.name}</option>
-                ))}
-              </select>
-              <button
-                onClick={runPreview}
-                disabled={!itemId || loading}
-                className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
-              >
-                {loading ? "Rendering…" : "Render preview"}
-              </button>
-            </div>
-
-            {err && <p className="mt-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">{err}</p>}
-
-            <div className="mt-3 flex-1 overflow-hidden rounded-lg border border-hair bg-canvas/30">
-              {loading ? (
-                <div className="grid h-full place-items-center text-sm text-muted">Rendering preview…</div>
-              ) : dataUrl ? (
-                <iframe src={dataUrl} title="Template preview" className="h-full w-full" />
-              ) : (
-                <div className="grid h-full place-items-center text-sm text-muted">
-                  Pick an item and click Render preview.
-                </div>
-              )}
-            </div>
-          </>
+          <div className="grid h-full place-items-center text-sm text-muted">
+            Pick an item and click Render preview.
+          </div>
         )}
       </div>
     </div>

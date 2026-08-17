@@ -377,6 +377,13 @@ model DocTemplate {
   placeholders String  @default("[]")        // JSON: detected placeholder names
   mapping      String  @default("{}")        // JSON: placeholder -> column NAME / {{Item}}
 
+  // Subitem tables: the template contains a {{#subitems}}...{{/subitems}}
+  // loop around a table row (detected on upload/replace). subitemColumns
+  // picks which of the parent item's subitem columns fill each repeated row
+  // — JSON array of column NAMES, in table-column order.
+  hasSubitemsLoop Boolean @default(false)
+  subitemColumns  String  @default("[]")
+
   // Output
   outputFormat   String  @default("docx")    // "docx" | "pdf"
   outputColumnId String?                     // File column to save the generated doc into

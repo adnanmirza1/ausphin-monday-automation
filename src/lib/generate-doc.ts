@@ -4,7 +4,7 @@ import { renderDocumentHtml, buildBlocks, type DocValue } from "@/lib/docgen";
 import type { StatusLabel } from "@/lib/constants";
 import { urlDisplay, parseFileValue, type FileValue } from "@/lib/cell-values";
 import { putFile, fetchFileBuffer } from "@/lib/blob-storage";
-import { fillDocx, DOCX_MIME } from "@/lib/docx-fill";
+import { fillDocx, DOCX_MIME, SUBITEMS_LOOP_TAG, type DocxFillValue } from "@/lib/docx-fill";
 import { resolveColumnBySlug, slugifyColumnName, ITEM_NAME_SLUG } from "@/lib/placeholders";
 import { convertDocxToPdf, cloudconvertConfigured } from "@/lib/cloudconvert";
 import type { Prisma } from "@/generated/prisma/client";
@@ -112,19 +112,85 @@ async function resolveItemValues(item: ItemWithCells): Promise<Record<string, Do
   return values;
 }
 
+type SubitemLite = {
+  id: string;
+  name: string;
+  cells: { columnId: string; value: string | null; personId: string | null }[];
+};
+
+// Resolve subitem rows for the {{#subitems}} table loop (Subitem tables —
+// client requirement): one row per subitem, values for the chosen board
+// columns (status labels and person names resolved to display text;
+// connection/mirror/signature/file columns are skipped as not
+// table-friendly). `subitemColumns` (board column names, in order) picks
+// which fields appear — empty means "all eligible columns" so a template
+// still works before the user configures a subset.
+async function resolveSubitemRowsForItem(
+  subitems: SubitemLite[],
+  boardColumns: { id: string; name: string; type: string }[],
+  subitemColumns: string[]
+): Promise<Record<string, string>[]> {
+  if (subitems.length === 0) return [];
+
+  const eligibleTypes = new Set(["text", "longtext", "status", "person", "date", "number", "email", "phone", "url"]);
+  const cols = boardColumns.filter((c) => eligibleTypes.has(c.type));
+  const chosen = subitemColumns.length ? cols.filter((c) => subitemColumns.includes(c.name)) : cols;
+
+  const statusColumnIds = new Set(chosen.filter((c) => c.type === "status").map((c) => c.id));
+  const statusCols = await db.column.findMany({
+    where: { id: { in: [...statusColumnIds] } },
+    select: { id: true, config: true },
+  });
+  const statusLabelsByColumn = new Map(
+    statusCols.map((c) => {
+      try {
+        return [c.id, (JSON.parse(c.config).labels ?? []) as { id: string; label: string }[]] as const;
+      } catch {
+        return [c.id, [] as { id: string; label: string }[]] as const;
+      }
+    })
+  );
+
+  const personIds = new Set(
+    subitems.flatMap((s) => s.cells.filter((c) => c.personId).map((c) => c.personId!))
+  );
+  const peopleRows = personIds.size
+    ? await db.user.findMany({ where: { id: { in: [...personIds] } }, select: { id: true, name: true } })
+    : [];
+  const people = new Map(peopleRows.map((p) => [p.id, { name: p.name }]));
+
+  return subitems.map((sub) => {
+    const row: Record<string, string> = { name: sub.name };
+    for (const col of chosen) {
+      const cell = sub.cells.find((c) => c.columnId === col.id);
+      let text = cell?.value ?? "";
+      if (col.type === "status" && cell?.value) {
+        const labels = statusLabelsByColumn.get(col.id) ?? [];
+        text = labels.find((l) => l.id === cell.value)?.label ?? "";
+      } else if (col.type === "person" && cell?.personId) {
+        text = people.get(cell.personId)?.name ?? "";
+      }
+      row[col.name] = text;
+    }
+    return row;
+  });
+}
+
 // Build the flat { placeholder -> filled text } map docxtemplater needs,
 // given a docx template's detected placeholders/mapping and an item's
 // resolved values. Shared by real generation and previews — the SAME
 // resolution order (explicit mapping -> exact column name -> {{item}} ->
 // deterministic slug fallback) that the placeholder reference UI guarantees
-// (see placeholders.ts / Improvement 2).
+// (see placeholders.ts / Improvement 2). Also injects the "subitems" loop
+// array (Subitem tables — client requirement) when the template uses it.
 function buildDocxFillData(
   itemName: string,
   boardColumns: { id: string; name: string; type: string }[],
   placeholders: string[],
   mapping: Record<string, string>,
-  values: Record<string, DocValue>
-): Record<string, string> {
+  values: Record<string, DocValue>,
+  subitemRows?: Record<string, string>[]
+): Record<string, DocxFillValue> {
   const textOf = (colName: string): string => {
     if (!colName) return "";
     if (colName === "Item" || colName === "{{Item}}") return itemName;
@@ -135,7 +201,7 @@ function buildDocxFillData(
   // {{Initial_1}}, {{Date_Signed_1}}) are NOT data — keep them literal so
   // DocuSign can convert them to signature fields later.
   const isSignatureAnchor = (p: string) => /^(signature|signer_name|signed_date|date_signed|initial)_?\d*$/i.test(p);
-  const data: Record<string, string> = {};
+  const data: Record<string, DocxFillValue> = {};
   for (const p of placeholders) {
     if (isSignatureAnchor(p)) {
       data[p] = `{{${p}}}`; // echo back so the anchor text survives filling
@@ -156,6 +222,7 @@ function buildDocxFillData(
       data[p] = col ? textOf(col.name) : "";
     }
   }
+  if (subitemRows) data[SUBITEMS_LOOP_TAG] = subitemRows;
   return data;
 }
 
@@ -175,6 +242,7 @@ export async function generateDocumentCoreDetailed(
       include: {
         cells: { include: { column: true, person: true } },
         board: { include: { columns: true } },
+        subitems: { orderBy: { position: "asc" }, include: { cells: true } },
       },
     }),
     db.docTemplate.findUnique({ where: { id: templateId } }),
@@ -187,13 +255,20 @@ export async function generateDocumentCoreDetailed(
   if (template.kind === "docx" && template.docxUrl) {
     let placeholders: string[] = [];
     let mapping: Record<string, string> = {};
+    let subitemColumns: string[] = [];
     try {
       placeholders = JSON.parse(template.placeholders);
     } catch {}
     try {
       mapping = JSON.parse(template.mapping);
     } catch {}
-    const data = buildDocxFillData(item.name, item.board.columns, placeholders, mapping, values);
+    try {
+      subitemColumns = JSON.parse(template.subitemColumns);
+    } catch {}
+    const subitemRows = template.hasSubitemsLoop
+      ? await resolveSubitemRowsForItem(item.subitems, item.board.columns, subitemColumns)
+      : undefined;
+    const data = buildDocxFillData(item.name, item.board.columns, placeholders, mapping, values, subitemRows);
 
     let outBuf: Buffer;
     try {
@@ -289,6 +364,7 @@ export async function renderTemplatePreview(itemId: string, templateId: string):
       include: {
         cells: { include: { column: true, person: true } },
         board: { include: { columns: true } },
+        subitems: { orderBy: { position: "asc" }, include: { cells: true } },
       },
     }),
     db.docTemplate.findUnique({ where: { id: templateId } }),
@@ -301,13 +377,20 @@ export async function renderTemplatePreview(itemId: string, templateId: string):
   const values = await resolveItemValues(item);
   let placeholders: string[] = [];
   let mapping: Record<string, string> = {};
+  let subitemColumns: string[] = [];
   try {
     placeholders = JSON.parse(template.placeholders);
   } catch {}
   try {
     mapping = JSON.parse(template.mapping);
   } catch {}
-  const data = buildDocxFillData(item.name, item.board.columns, placeholders, mapping, values);
+  try {
+    subitemColumns = JSON.parse(template.subitemColumns);
+  } catch {}
+  const subitemRows = template.hasSubitemsLoop
+    ? await resolveSubitemRowsForItem(item.subitems, item.board.columns, subitemColumns)
+    : undefined;
+  const data = buildDocxFillData(item.name, item.board.columns, placeholders, mapping, values, subitemRows);
 
   let filledBuf: Buffer;
   try {

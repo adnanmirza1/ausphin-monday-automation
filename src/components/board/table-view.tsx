@@ -247,6 +247,7 @@ function GroupBlock({
   const rowWidth = NAME_W + board.columns.length * COL_W;
   const allSel = group.items.length > 0 && group.items.every((it) => sel?.selected.has(it.id));
   const someSel = group.items.some((it) => sel?.selected.has(it.id));
+  const [collapsed, setCollapsed] = useGroupCollapsed(board.id, group.id);
 
   return (
     <div className="mb-7 animate-rise">
@@ -279,6 +280,14 @@ function GroupBlock({
             ⠿
           </span>
         )}
+        <button
+          onClick={() => setCollapsed((c) => !c)}
+          className="grid h-4 w-4 flex-none place-items-center text-[10px] text-muted hover:text-teal"
+          title={collapsed ? "Expand group" : "Collapse group"}
+          aria-label={collapsed ? "Expand group" : "Collapse group"}
+        >
+          {collapsed ? "▸" : "▾"}
+        </button>
         <div className="relative">
           <button
             disabled={readOnly}
@@ -348,70 +357,112 @@ function GroupBlock({
       </div>
 
       {/* Card wrapper */}
-      <div
-        onDragOver={(e) => !readOnly && e.preventDefault()}
-        onDrop={(e) => {
-          if (readOnly) return;
-          e.preventDefault();
-          const draggedId = e.dataTransfer.getData("text/plain");
-          if (draggedId) start(() => void reorderItem(board.id, draggedId, group.id, null));
-        }}
-        className={`rounded-xl border border-hair bg-white shadow-soft ${pinFirst ? "" : "overflow-hidden"}`}
-        style={{ width: rowWidth }}
-      >
-        {/* Column header */}
-        <div className="flex items-stretch border-b border-hair bg-canvas/60">
-          <div
-            style={{ width: NAME_W }}
-            className={`flex items-center gap-1.5 px-3 py-2 ${pinFirst ? `${PIN_CLS} z-20 bg-canvas` : ""}`}
-          >
-            {!readOnly && sel && group.items.length > 0 && (
-              <input
-                type="checkbox"
-                checked={allSel}
-                ref={(el) => {
-                  if (el) el.indeterminate = someSel && !allSel;
-                }}
-                onChange={(e) => sel.setMany(group.items.map((it) => it.id), e.target.checked)}
-                className="h-3.5 w-3.5 flex-none cursor-pointer accent-teal"
-                title="Select all in this group"
-              />
-            )}
-            <span className="h-full w-1.5 flex-none opacity-0" />
-            <ItemColumnLabel boardId={board.id} name={board.itemColumnName} readOnly={readOnly} />
-          </div>
-          {board.columns.map((c) => (
-            <div key={c.id} style={{ width: COL_W }} className="border-l border-hair">
-              <ColumnHeader boardId={board.id} column={c} permData={permData} readOnly={readOnly} />
+      {!collapsed && (
+        <div
+          onDragOver={(e) => !readOnly && e.preventDefault()}
+          onDrop={(e) => {
+            if (readOnly) return;
+            e.preventDefault();
+            const draggedId = e.dataTransfer.getData("text/plain");
+            if (draggedId) start(() => void reorderItem(board.id, draggedId, group.id, null));
+          }}
+          className={`rounded-xl border border-hair bg-white shadow-soft ${pinFirst ? "" : "overflow-hidden"}`}
+          style={{ width: rowWidth }}
+        >
+          {/* Column header */}
+          <div className="flex items-stretch border-b border-hair bg-canvas/60">
+            <div
+              style={{ width: NAME_W }}
+              className={`flex items-center gap-1.5 px-3 py-2 ${pinFirst ? `${PIN_CLS} z-20 bg-canvas` : ""}`}
+            >
+              {!readOnly && sel && group.items.length > 0 && (
+                <input
+                  type="checkbox"
+                  checked={allSel}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someSel && !allSel;
+                  }}
+                  onChange={(e) => sel.setMany(group.items.map((it) => it.id), e.target.checked)}
+                  className="h-3.5 w-3.5 flex-none cursor-pointer accent-teal"
+                  title="Select all in this group"
+                />
+              )}
+              <span className="h-full w-1.5 flex-none opacity-0" />
+              <ItemColumnLabel boardId={board.id} name={board.itemColumnName} readOnly={readOnly} />
             </div>
+            {board.columns.map((c) => (
+              <div key={c.id} style={{ width: COL_W }} className="border-l border-hair">
+                <ColumnHeader boardId={board.id} column={c} permData={permData} readOnly={readOnly} />
+              </div>
+            ))}
+          </div>
+
+          {group.items.map((item) => (
+            <Row
+              key={item.id}
+              board={board}
+              group={group}
+              item={item}
+              people={people}
+              readOnly={readOnly}
+              connectionOptions={connectionOptions}
+              rowHeight={rowHeight}
+              colorBy={colorBy}
+              pinFirst={pinFirst}
+            />
           ))}
+
+          {group.items.length === 0 && (
+            <p className="px-4 py-3 text-xs text-muted" style={{ paddingLeft: 18 }}>
+              No items
+            </p>
+          )}
+
+          {!readOnly && <AddItem boardId={board.id} groupId={group.id} color={group.color} />}
         </div>
-
-        {group.items.map((item) => (
-          <Row
-            key={item.id}
-            board={board}
-            group={group}
-            item={item}
-            people={people}
-            readOnly={readOnly}
-            connectionOptions={connectionOptions}
-            rowHeight={rowHeight}
-            colorBy={colorBy}
-            pinFirst={pinFirst}
-          />
-        ))}
-
-        {group.items.length === 0 && (
-          <p className="px-4 py-3 text-xs text-muted" style={{ paddingLeft: 18 }}>
-            No items
-          </p>
-        )}
-
-        {!readOnly && <AddItem boardId={board.id} groupId={group.id} color={group.color} />}
-      </div>
+      )}
     </div>
   );
+}
+
+// Per-group collapsed/expanded state, persisted in localStorage per board so
+// a fold survives page refresh without needing a schema migration for what
+// is purely a local view preference (matches how Monday.com treats group
+// collapse — per viewer, not shared data).
+function collapsedKey(boardId: string) {
+  return `docugen:collapsedGroups:${boardId}`;
+}
+
+function readCollapsedSet(boardId: string): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(collapsedKey(boardId));
+    return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function useGroupCollapsed(boardId: string, groupId: string): [boolean, (fn: (c: boolean) => boolean) => void] {
+  const [collapsed, setCollapsedState] = useState(() => readCollapsedSet(boardId).has(groupId));
+
+  const setCollapsed = (fn: (c: boolean) => boolean) => {
+    setCollapsedState((prev) => {
+      const next = fn(prev);
+      const set = readCollapsedSet(boardId);
+      if (next) set.add(groupId);
+      else set.delete(groupId);
+      try {
+        window.localStorage.setItem(collapsedKey(boardId), JSON.stringify([...set]));
+      } catch {
+        // localStorage unavailable (private mode / quota) — collapse still
+        // works for this session, just won't survive a refresh.
+      }
+      return next;
+    });
+  };
+
+  return [collapsed, setCollapsed];
 }
 
 // Click-to-rename label for the built-in Item column (Improvement 3). Empty

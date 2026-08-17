@@ -58,11 +58,14 @@ export type DocuGenTemplate = {
   docxUrl: string;
   placeholders: string[];
   mapping: Record<string, string>;
+  hasSubitemsLoop: boolean;
+  subitemColumns: string[];
   outputFormat: string;
   outputColumnId: string | null;
   active: boolean;
   version: number;
   usageCount: number;
+  usingAutomations: { id: string; name: string }[];
   createdAt: string;
 };
 export type DocuGenData = {
@@ -78,10 +81,12 @@ function jsonObj(s: string): Record<string, string> {
   try { const o = JSON.parse(s); return o && typeof o === "object" ? o : {}; } catch { return {}; }
 }
 
-// Count how many automations on the board reference each templateId (usage).
-async function templateUsage(boardId: string): Promise<Map<string, number>> {
-  const autos = await db.automation.findMany({ where: { boardId }, select: { action: true } });
-  const counts = new Map<string, number>();
+// Which automations on the board reference each templateId, by name — the
+// data behind DocuGen's "Automation" section (client requirement: see which
+// automations use this template, matching the reference app's menu).
+async function templateUsage(boardId: string): Promise<Map<string, { id: string; name: string }[]>> {
+  const autos = await db.automation.findMany({ where: { boardId }, select: { id: true, name: true, action: true } });
+  const usage = new Map<string, { id: string; name: string }[]>();
   for (const a of autos) {
     let parsed: unknown;
     try { parsed = JSON.parse(a.action); } catch { continue; }
@@ -90,11 +95,14 @@ async function templateUsage(boardId: string): Promise<Map<string, number>> {
       : [parsed];
     for (const act of list) {
       const o = act as { type?: string; templateId?: string };
-      if (o?.type === "generate_document" && o.templateId)
-        counts.set(o.templateId, (counts.get(o.templateId) ?? 0) + 1);
+      if (o?.type === "generate_document" && o.templateId) {
+        const list = usage.get(o.templateId) ?? [];
+        list.push({ id: a.id, name: a.name });
+        usage.set(o.templateId, list);
+      }
     }
   }
-  return counts;
+  return usage;
 }
 
 export async function getDocuGenData(boardId: string): Promise<DocuGenData> {
@@ -119,11 +127,14 @@ export async function getDocuGenData(boardId: string): Promise<DocuGenData> {
       docxUrl: t.docxUrl,
       placeholders: jsonArr(t.placeholders),
       mapping: jsonObj(t.mapping),
+      hasSubitemsLoop: t.hasSubitemsLoop,
+      subitemColumns: jsonArr(t.subitemColumns),
       outputFormat: t.outputFormat,
       outputColumnId: t.outputColumnId,
       active: t.active,
       version: t.version,
-      usageCount: usage.get(t.id) ?? 0,
+      usageCount: (usage.get(t.id) ?? []).length,
+      usingAutomations: usage.get(t.id) ?? [],
       createdAt: t.createdAt.toISOString(),
     })),
     columns,
@@ -189,7 +200,14 @@ export async function uploadDocxTemplate(
   if (buf.length > 15 * 1024 * 1024) return { ok: false, error: "Template is over 15 MB." };
 
   let placeholders: string[] = [];
-  try { placeholders = extractPlaceholders(buf); } catch { return { ok: false, error: "That doesn't look like a valid .docx file." }; }
+  let hasSubitemsLoop = false;
+  try {
+    const detected = extractPlaceholders(buf);
+    placeholders = detected.placeholders;
+    hasSubitemsLoop = detected.hasSubitemsLoop;
+  } catch {
+    return { ok: false, error: "That doesn't look like a valid .docx file." };
+  }
 
   // Duplicate detection — same filename already on this board.
   const dup = await db.docTemplate.findFirst({ where: { boardId, docxName: input.fileName }, select: { id: true } });
@@ -220,6 +238,7 @@ export async function uploadDocxTemplate(
       docxName: input.fileName,
       placeholders: JSON.stringify(placeholders),
       mapping: JSON.stringify(mapping),
+      hasSubitemsLoop,
       outputFormat: "docx",
       active: true,
       version: 1,
@@ -236,6 +255,7 @@ export async function saveTemplateMeta(
   patch: Partial<{
     name: string; viewName: string; reference: string; employer: string;
     category: string; folder: string; mapping: Record<string, string>;
+    subitemColumns: string[];
     outputFormat: string; outputColumnId: string | null;
   }>
 ): Promise<void> {
@@ -248,6 +268,7 @@ export async function saveTemplateMeta(
   if (patch.category !== undefined) data.category = patch.category.trim();
   if (patch.folder !== undefined) data.folder = patch.folder.trim();
   if (patch.mapping !== undefined) data.mapping = JSON.stringify(patch.mapping);
+  if (patch.subitemColumns !== undefined) data.subitemColumns = JSON.stringify(patch.subitemColumns);
   if (patch.outputFormat !== undefined) data.outputFormat = patch.outputFormat;
   if (patch.outputColumnId !== undefined) data.outputColumnId = patch.outputColumnId;
   await db.docTemplate.updateMany({ where: { id, boardId }, data });
@@ -267,7 +288,14 @@ export async function replaceTemplateFile(
   let buf: Buffer;
   try { buf = bufFromDataUrl(input.dataUrl); } catch { return { ok: false, error: "Could not read the file." }; }
   let placeholders: string[] = [];
-  try { placeholders = extractPlaceholders(buf); } catch { return { ok: false, error: "Invalid .docx file." }; }
+  let hasSubitemsLoop = false;
+  try {
+    const detected = extractPlaceholders(buf);
+    placeholders = detected.placeholders;
+    hasSubitemsLoop = detected.hasSubitemsLoop;
+  } catch {
+    return { ok: false, error: "Invalid .docx file." };
+  }
 
   // Snapshot the current version.
   await db.docTemplateVersion.create({
@@ -276,7 +304,7 @@ export async function replaceTemplateFile(
   const url = await putFile(`templates/${boardId}/${input.fileName}`, buf, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
   await db.docTemplate.update({
     where: { id },
-    data: { docxUrl: url, docxName: input.fileName, placeholders: JSON.stringify(placeholders), version: cur.version + 1 },
+    data: { docxUrl: url, docxName: input.fileName, placeholders: JSON.stringify(placeholders), hasSubitemsLoop, version: cur.version + 1 },
   });
   revalidatePath(`/boards/${boardId}`);
   return { ok: true, id, placeholders };
