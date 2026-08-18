@@ -18,7 +18,16 @@ type Trigger =
   | { type: "status_changes"; columnId: string; to: string } // to = labelId | "any"
   | { type: "column_changes"; columnId: string; when?: "any" | "not_empty" }
   | { type: "person_assigned"; columnId: string }
-  | { type: "item_moved"; groupId: string }; // groupId | "any"
+  | { type: "item_moved"; groupId: string } // groupId | "any"
+  // Generic third-party-integration trigger: fires from a provider's webhook
+  // receiver (src/app/api/integrations/[provider]/webhook/route.ts), not
+  // from an in-app board mutation, so it is matched separately (see
+  // runIntegrationAutomations below) rather than through the synchronous
+  // AutomationEvent path. providerTriggerId is one of that provider's
+  // ProviderTrigger.id values from the registry (e.g. github's
+  // "issue_created"). resource = the provider resource id (repo/project) |
+  // "any".
+  | { type: "integration_trigger"; provider: string; providerTriggerId: string; resource: string };
 
 // Source column -> destination column, used by the two "create item/subitem
 // on another board" actions (Automations 1 & 3) for flexible field transfer.
@@ -65,7 +74,14 @@ type Action =
       boardId: string;
       emailColumnId?: string; // source-board column to read the email from
       fieldMapping?: FieldMapping[];
-    };
+    }
+  // Generic third-party-integration action: executes providerActionId (one
+  // of that provider's ProviderAction.id values from the registry, e.g.
+  // github's "create_issue", slack's "post_message") against the org's
+  // stored connection for `provider`. `fields` map to that action's declared
+  // ProviderAction.fields keys and support the same {{Placeholder}} syntax
+  // as send_email, rendered from the triggering item's data before sending.
+  | { type: "integration_action"; provider: string; providerActionId: string; resource?: string; fields: Record<string, string> };
 
 // A stored action is either a single action or a sequence (multiple THEN steps).
 // Kept backward-compatible: existing single-action rules parse straight to Action.
@@ -102,6 +118,10 @@ function matches(trigger: Trigger, event: AutomationEvent): boolean {
   if (trigger.type === "item_moved" && event.type === "item_moved") {
     return trigger.groupId === "any" || trigger.groupId === event.groupId;
   }
+  // integration_trigger can never reach here: trigger.type !== event.type
+  // above already excludes it, since AutomationEvent has no such variant —
+  // it's matched separately in runIntegrationAutomations from each
+  // provider's webhook route.
   return trigger.type === "item_created";
 }
 
@@ -884,7 +904,144 @@ async function execute(action: Action, event: AutomationEvent): Promise<ActionOu
       await logAutomation(itemId, `⚡ Added as a subitem of "${parent.name}" on "${destBoard.name}" (email match).`);
       break;
     }
+
+    case "integration_action": {
+      const it = await db.item.findUnique({
+        where: { id: itemId },
+        include: { cells: { include: { column: true, person: true } }, board: { include: { environment: true } } },
+      });
+      if (!it) { outcome.status = "skipped"; outcome.error = "item not found"; break; }
+      const orgId = it.board.environment.orgId;
+      const { getProvider } = await import("@/lib/integrations/registry");
+      const provider = getProvider(action.provider);
+      if (!provider) { outcome.status = "skipped"; outcome.error = `unknown provider "${action.provider}"`; break; }
+      const conn = await db.connectedIntegration.findUnique({
+        where: { orgId_provider: { orgId, provider: action.provider } },
+      });
+      if (!conn) {
+        await logAutomation(itemId, `⚡ ${provider.name}: skipped — not connected.`);
+        outcome.status = "skipped";
+        outcome.error = `${provider.name} not connected`;
+        break;
+      }
+      const renderedFields: Record<string, string> = {};
+      for (const [k, v] of Object.entries(action.fields ?? {})) renderedFields[k] = await renderTemplate(itemId, v);
+      const { result: res, attempts } = await withRetryResult(() =>
+        provider.executeAction(conn.accessToken, action.providerActionId, action.resource, renderedFields, conn.accountLabel)
+      );
+      outcome.attempts = attempts;
+      if (!res.ok) {
+        await logAutomation(itemId, `⚡ ${provider.name}: failed — ${res.error}`);
+        outcome.status = "failed";
+        outcome.error = res.error;
+        break;
+      }
+      await logAutomation(itemId, `⚡ ${provider.name}: done${res.url ? ` — ${res.url}` : ""}.`);
+      break;
+    }
   }
 
   return outcome;
+}
+
+// Integration webhook path: unlike board-mutation events, an incoming
+// provider webhook isn't scoped to one boardId, so automations are looked up
+// by provider+trigger across every board in the org that owns the
+// connection, and executed against a synthetic event carrying no itemId
+// (only actions that don't need a pre-existing item make sense here — see
+// executeFromIntegrationTrigger).
+export async function runIntegrationAutomations(
+  orgId: string,
+  provider: string,
+  providerTriggerId: string,
+  resource: string,
+  triggerLabel: string,
+  triggerUrl: string
+) {
+  const boards = await db.board.findMany({
+    where: { environment: { orgId } },
+    select: { id: true },
+  });
+  const boardIds = boards.map((b) => b.id);
+  if (boardIds.length === 0) return;
+
+  const automations = await db.automation.findMany({
+    where: { boardId: { in: boardIds }, enabled: true },
+  });
+
+  for (const a of automations) {
+    const trigger = parse<Trigger>(a.trigger);
+    const stored = parse<StoredAction>(a.action);
+    if (!trigger || !stored) continue;
+    if (trigger.type !== "integration_trigger") continue;
+    if (trigger.provider !== provider || trigger.providerTriggerId !== providerTriggerId) continue;
+    if (trigger.resource !== "any" && trigger.resource !== resource) continue;
+
+    const startedAt = new Date();
+    let status: "success" | "partial" | "failed" = "success";
+    let error = "";
+    let attempts = 1;
+
+    for (const action of actionList(stored)) {
+      try {
+        const outcome = await executeFromIntegrationTrigger(action, triggerLabel, triggerUrl, provider, resource);
+        attempts += outcome.attempts - 1;
+        if (outcome.status === "failed" && status !== "failed") {
+          status = "failed";
+          error = outcome.error ?? error;
+        } else if (outcome.status === "skipped" && status === "success") {
+          status = "partial";
+          error = outcome.error ?? error;
+        }
+      } catch (e) {
+        status = "failed";
+        error = e instanceof Error ? e.message : String(e);
+      }
+    }
+
+    await db.automationLog
+      .create({
+        data: {
+          automationId: a.id,
+          automationName: a.name,
+          boardId: a.boardId,
+          itemId: null,
+          status,
+          error,
+          attempts,
+          startedAt,
+          finishedAt: new Date(),
+        },
+      })
+      .catch((e) => console.error("[automation:log]", e));
+  }
+}
+
+// Actions reachable from an integration_trigger. Only "create item on this
+// board" makes sense without a pre-existing itemId — other actions (set_status,
+// send_email, etc.) all require one and are skipped here rather than silently
+// no-op'd, so a misconfigured rule is visible in the log.
+async function executeFromIntegrationTrigger(
+  action: Action,
+  triggerLabel: string,
+  triggerUrl: string,
+  provider: string,
+  resource: string
+): Promise<ActionOutcome> {
+  if (action.type === "create_item_in_board") {
+    const destBoard = await db.board.findUnique({ where: { id: action.boardId } });
+    if (!destBoard || destBoard.archivedAt) return { status: "skipped", error: "destination board unavailable", attempts: 1 };
+    const targetGroup = await db.group.findFirst({ where: { boardId: action.boardId }, orderBy: { position: "asc" } });
+    if (!targetGroup) return { status: "skipped", error: `"${destBoard.name}" has no group to receive it`, attempts: 1 };
+    const count = await db.item.count({ where: { groupId: targetGroup.id } });
+    const newItem = await db.item.create({
+      data: { boardId: action.boardId, groupId: targetGroup.id, name: triggerLabel, position: count },
+    });
+    await db.update.create({
+      data: { itemId: newItem.id, body: `⚡ Created from ${provider} (${resource}): ${triggerUrl}`, mentions: "[]" },
+    });
+    await runAutomations({ type: "item_created", boardId: action.boardId, itemId: newItem.id });
+    return { status: "success", attempts: 1 };
+  }
+  return { status: "skipped", error: `action "${action.type}" requires an existing item and can't run from an integration trigger`, attempts: 1 };
 }

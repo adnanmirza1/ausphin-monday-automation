@@ -15,6 +15,14 @@ import { PALETTE } from "@/lib/constants";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { DropdownMenu } from "@/components/ui/popover";
 
+const AI_HUB_ITEMS = [
+  { href: "/ai/sidekick", label: "AI Sidekick" },
+  { href: "/ai/vibe", label: "Vibe" },
+  { href: "/ai/workflows", label: "AI Workflows" },
+  { href: "/ai/agents", label: "AI Agents" },
+  { href: "/ai/notetaker", label: "AI Notetaker" },
+] as const;
+
 export type NavEnv = {
   id: string;
   name: string;
@@ -46,6 +54,7 @@ export function Sidebar({
   const [open, setOpen] = useState<Record<string, boolean>>(
     Object.fromEntries(nav.map((e) => [e.id, true]))
   );
+  const [aiOpen, setAiOpen] = useState(pathname.startsWith("/ai"));
 
   const initials = user.name.split(" ").map((s) => s[0]).slice(0, 2).join("");
 
@@ -94,6 +103,38 @@ export function Sidebar({
         >
           <span className="font-mono text-xs">◈</span> Employers
         </Link>
+
+        <div className="mb-2">
+          <button
+            onClick={() => setAiOpen((v) => !v)}
+            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium ${
+              pathname.startsWith("/ai") ? "bg-teal/20 text-white" : "text-white/70 hover:bg-rail-hover"
+            }`}
+          >
+            <span className="font-mono text-xs">✦</span>
+            <span className="flex-1 text-left">AI Hub</span>
+            <span className="flex-none text-xs text-white/40">{aiOpen ? "▾" : "▸"}</span>
+          </button>
+          {aiOpen && (
+            <div className="ml-3 mt-0.5 border-l border-white/10 pl-2">
+              {AI_HUB_ITEMS.map((item) => {
+                const active = pathname === item.href;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={onNavigate}
+                    className={`block truncate rounded-md px-2 py-1.5 text-sm ${
+                      active ? "bg-teal/20 font-medium text-white" : "text-white/70 hover:bg-rail-hover"
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         <p className="px-2 pb-1 font-mono text-[10px] uppercase tracking-widest text-white/35">
           Workspaces

@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { permsOf } from "@/lib/guard";
 import { SenderSettings } from "./sender-settings";
 import { DocuSignSettings } from "./docusign-settings";
+import { IntegrationsGrid } from "./integrations-grid";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,13 @@ export default async function SettingsPage() {
       configured: !!env.CRON_SECRET,
       envVars: ["CRON_SECRET"],
       note: "Point a scheduler at the endpoint with a Bearer token.",
+    },
+    {
+      name: "AI Workflows",
+      enables: "Prompt-to-workflow building in AI Hub → AI Workflows",
+      configured: !!env.ANTHROPIC_API_KEY,
+      envVars: ["ANTHROPIC_API_KEY"],
+      note: "Uses Claude to parse a plain-English prompt into a real automation.",
     },
   ];
 
@@ -109,8 +117,16 @@ export default async function SettingsPage() {
 
         <DocuSignSettings />
 
+        <div className="mt-6">
+          <h2 className="mb-1 text-sm font-bold text-ink">Integrations</h2>
+          <p className="mb-3 text-xs text-muted">
+            Connect a third-party app, then reference it from an automation&rsquo;s trigger or action.
+          </p>
+          <IntegrationsGrid />
+        </div>
+
         <p className="mt-4 text-xs text-muted">
-          Tip: set these in <code className="font-mono">.env</code> (dev) or your host's
+          Tip: set these in <code className="font-mono">.env</code> (dev) or your host&apos;s
           environment (production). The app reads them at startup — the stubs already in
           place activate automatically once keys are present.
         </p>

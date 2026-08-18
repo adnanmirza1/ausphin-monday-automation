@@ -307,6 +307,8 @@ function describeTrigger(t: SafeObj, columns: Col[], groups: Grp[]) {
   if (t?.type === "person_assigned") return `When a person is assigned in ${colName(t.columnId)}`;
   if (t?.type === "item_moved")
     return `When an item moves to ${t.groupId === "any" ? "any group" : `“${grp(t.groupId)}”`}`;
+  if (t?.type === "integration_trigger")
+    return `When ${t.provider} triggers ${t.providerTriggerId.replace(/_/g, " ")}${t.resource && t.resource !== "any" ? ` (${t.resource})` : ""}`;
   return "When something happens";
 }
 
@@ -347,6 +349,8 @@ function describeAction(a: SafeObj, columns: Col[], groups: Grp[], departments: 
   }
   if (a?.type === "send_docusign")
     return `send for e-signature via DocuSign${a.docusignTemplateId ? " (template)" : ""}`;
+  if (a?.type === "integration_action")
+    return `${a.provider}: ${String(a.providerActionId ?? "").replace(/_/g, " ")}${a.resource ? ` (${a.resource})` : ""}`;
   if (a?.type === "set_date")
     return a.mode === "today"
       ? `set ${colName(a.columnId)} to today`
@@ -624,7 +628,8 @@ type ActionType =
   | "set_date"
   | "send_docusign"
   | "create_subitem_by_email"
-  | "create_subitem_in_board";
+  | "create_subitem_in_board"
+  | "integration_action";
 
 type ActionDraft = {
   key: string;
@@ -663,6 +668,11 @@ type ActionDraft = {
   // column to match on (subitem actions only).
   fieldMapping?: FieldMapping[];
   subEmailCol?: string;
+  // integration_action — generic third-party action (see IntegrationActionEditor)
+  intProvider?: string;
+  intActionId?: string;
+  intResource?: string;
+  intFields?: Record<string, string>;
 };
 
 let draftSeq = 0;
@@ -716,6 +726,10 @@ function toDraft(
       (t === "create_subitem_by_email" || t === "create_subitem_in_board" ? a?.emailColumnId : "") ||
       d.emailCols[0]?.id ||
       "",
+    intProvider: t === "integration_action" ? a?.provider ?? "" : "",
+    intActionId: t === "integration_action" ? a?.providerActionId ?? "" : "",
+    intResource: t === "integration_action" ? a?.resource ?? "" : "",
+    intFields: t === "integration_action" && a?.fields && typeof a.fields === "object" ? a.fields : {},
   };
 }
 
@@ -774,6 +788,14 @@ function buildAction(a: ActionDraft): Record<string, unknown> {
         statusColumnId: a.dsStatusCol || undefined,
         signedColumnId: a.dsSignedCol || undefined,
       };
+    case "integration_action":
+      return {
+        type: "integration_action",
+        provider: a.intProvider ?? "",
+        providerActionId: a.intActionId ?? "",
+        resource: a.intResource || undefined,
+        fields: a.intFields ?? {},
+      };
     default:
       return { type: "move_to_group", groupId: a.groupId };
   }
@@ -826,12 +848,23 @@ function CreateModal({
 
   // trigger state
   const [tType, setTType] = useState<
-    "item_created" | "status_changes" | "column_changes" | "person_assigned" | "item_moved"
+    "item_created" | "status_changes" | "column_changes" | "person_assigned" | "item_moved" | "integration_trigger"
   >(et.type ?? "status_changes");
   const [tCol, setTCol] = useState(et.columnId ?? statusCols[0]?.id ?? "");
   const [tTo, setTTo] = useState(et.to ?? "any");
   const [tWhen, setTWhen] = useState<"any" | "not_empty">(et.when ?? "any");
   const [tGroup, setTGroup] = useState(et.groupId ?? "any");
+  const [tIntProvider, setTIntProvider] = useState(et.type === "integration_trigger" ? et.provider ?? "" : "");
+  const [tIntTriggerId, setTIntTriggerId] = useState(et.type === "integration_trigger" ? et.providerTriggerId ?? "" : "");
+  const [tIntResource, setTIntResource] = useState(et.type === "integration_trigger" ? et.resource ?? "any" : "any");
+  const [providerCaps, setProviderCaps] = useState<ProviderCapabilities[] | null>(null);
+  useEffect(() => {
+    import("@/app/actions/integrations").then(({ listConnectedProviderCapabilities }) =>
+      listConnectedProviderCapabilities().then(setProviderCaps).catch(() => setProviderCaps([]))
+    );
+  }, []);
+  const providersWithTriggers = (providerCaps ?? []).filter((p) => p.triggers.length > 0);
+  const activeProviderTriggers = providersWithTriggers.find((p) => p.provider === tIntProvider)?.triggers ?? [];
 
   // actions state — one or more THEN steps
   const initialActions: SafeObj[] =
@@ -869,6 +902,9 @@ function CreateModal({
         break;
       case "item_moved":
         trigger = { type: "item_moved", groupId: tGroup };
+        break;
+      case "integration_trigger":
+        trigger = { type: "integration_trigger", provider: tIntProvider, providerTriggerId: tIntTriggerId, resource: tIntResource || "any" };
         break;
       default:
         trigger = { type: "item_created" };
@@ -950,6 +986,7 @@ function CreateModal({
               <option value="column_changes">A column changes</option>
               <option value="person_assigned">A person is assigned</option>
               <option value="item_moved">An item moves to a group</option>
+              {providersWithTriggers.length > 0 && <option value="integration_trigger">An integration event happens</option>}
             </select>
             {tType === "status_changes" && (
               <div className="mt-2 grid grid-cols-2 gap-2">
@@ -994,6 +1031,44 @@ function CreateModal({
                   <option key={g.id} value={g.id}>to “{g.name}”</option>
                 ))}
               </select>
+            )}
+            {tType === "integration_trigger" && (
+              <div className="mt-2 grid gap-2">
+                {providersWithTriggers.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-hair px-3 py-2 text-xs text-amber">
+                    No connected integration offers a trigger yet — connect one in Settings first.
+                  </p>
+                ) : (
+                  <>
+                    <select
+                      value={tIntProvider}
+                      onChange={(e) => {
+                        const prov = e.target.value;
+                        const firstTrigger = providersWithTriggers.find((p) => p.provider === prov)?.triggers[0];
+                        setTIntProvider(prov);
+                        setTIntTriggerId(firstTrigger?.id ?? "");
+                        setTIntResource("any");
+                      }}
+                      className={inp}
+                    >
+                      <option value="">Select an integration…</option>
+                      {providersWithTriggers.map((p) => (
+                        <option key={p.provider} value={p.provider}>{p.name}</option>
+                      ))}
+                    </select>
+                    {tIntProvider && (
+                      <select value={tIntTriggerId} onChange={(e) => setTIntTriggerId(e.target.value)} className={inp}>
+                        {activeProviderTriggers.map((t) => (
+                          <option key={t.id} value={t.id}>{t.label}</option>
+                        ))}
+                      </select>
+                    )}
+                    {tIntProvider && activeProviderTriggers.find((t) => t.id === tIntTriggerId)?.needsResource && (
+                      <IntegrationResourcePicker provider={tIntProvider} value={tIntResource} onChange={setTIntResource} allowAny />
+                    )}
+                  </>
+                )}
+              </div>
             )}
           </div>
 
@@ -1135,6 +1210,7 @@ function ActionEditor({
         <option value="create_subitem_in_board">Create subitem in another board (match by email)</option>
         <option value="set_date">Set a date</option>
         <option value="send_docusign">Send for e-signature (DocuSign)</option>
+        <option value="integration_action">Integration action…</option>
       </select>
 
       {a.type === "move_to_group" && (
@@ -1355,6 +1431,10 @@ function ActionEditor({
         </div>
       )}
 
+      {a.type === "integration_action" && (
+        <IntegrationActionEditor a={a} onPatch={onPatch} itemColumnName={itemColumnName} />
+      )}
+
       {a.type === "create_subitem_in_board" && (
         <div className="mt-2 grid gap-2">
           <div>
@@ -1516,6 +1596,170 @@ function DsTemplatePicker({ value, onChange }: { value: string; onChange: (v: st
 // Searchable DocuGen template picker (A2): shows Name – View – Ref – Employer,
 // only offers ACTIVE templates for new selection, and keeps a now-unavailable
 // stored template visible with a warning so the automation still shows its intent.
+// Generic resource picker (repo/channel/project/service) for any provider's
+// trigger/action fields — fetches the connected account's resources live via
+// listIntegrationResources(provider), the same generic registry-backed call
+// every provider (github, gitlab, slack, jira, teams, circleci, pagerduty)
+// answers identically, so this one component serves all of them.
+function IntegrationResourcePicker({
+  provider,
+  value,
+  onChange,
+  allowAny,
+}: {
+  provider: string;
+  value: string;
+  onChange: (id: string) => void;
+  allowAny?: boolean;
+}) {
+  const [loaded, setLoaded] = useState<{ provider: string; resources: { id: string; label: string }[] } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    import("@/app/actions/integrations").then(({ listIntegrationResources }) =>
+      listIntegrationResources(provider).then((resources) => {
+        if (!cancelled) setLoaded({ provider, resources });
+      }).catch(() => {
+        if (!cancelled) setLoaded({ provider, resources: [] });
+      })
+    );
+    return () => { cancelled = true; };
+  }, [provider]);
+
+  const resources = loaded?.provider === provider ? loaded.resources : null;
+  if (resources === null) return <p className="text-xs text-muted">Loading…</p>;
+  if (resources.length === 0)
+    return (
+      <p className="rounded-lg border border-dashed border-hair px-3 py-2 text-xs text-amber">
+        Nothing found — reconnect in Settings, or type an id below.
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="resource id"
+          className={`${inp} mt-1.5`}
+        />
+      </p>
+    );
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={inp}>
+      {allowAny && <option value="any">any</option>}
+      {!allowAny && !value && <option value="">Select…</option>}
+      {resources.map((r) => (
+        <option key={r.id} value={r.id}>{r.label}</option>
+      ))}
+    </select>
+  );
+}
+
+type ProviderCapabilities = {
+  provider: string;
+  name: string;
+  triggers: { id: string; label: string; needsResource?: boolean; resourceLabel?: string }[];
+  actions: {
+    id: string;
+    label: string;
+    needsResource?: boolean;
+    resourceLabel?: string;
+    fields: { key: string; label: string; kind: "text" | "textarea"; placeholder?: string }[];
+  }[];
+};
+
+// Generic action editor: pick a connected provider, pick one of its declared
+// actions, fill its resource (if needed) and its declared fields — no
+// per-provider UI code, driven entirely by the registry's metadata.
+function IntegrationActionEditor({
+  a,
+  onPatch,
+  itemColumnName,
+}: {
+  a: ActionDraft;
+  onPatch: (patch: Partial<ActionDraft>) => void;
+  itemColumnName: string;
+}) {
+  const [caps, setCaps] = useState<ProviderCapabilities[] | null>(null);
+  useEffect(() => {
+    import("@/app/actions/integrations").then(({ listConnectedProviderCapabilities }) =>
+      listConnectedProviderCapabilities().then(setCaps).catch(() => setCaps([]))
+    );
+  }, []);
+
+  const providersWithActions = (caps ?? []).filter((p) => p.actions.length > 0);
+  const activeProvider = providersWithActions.find((p) => p.provider === a.intProvider);
+  const activeAction = activeProvider?.actions.find((x) => x.id === a.intActionId);
+
+  if (caps === null) return <p className="mt-2 text-xs text-muted">Loading connected integrations…</p>;
+  if (providersWithActions.length === 0)
+    return (
+      <p className="mt-2 rounded-lg border border-dashed border-hair px-3 py-2 text-xs text-amber">
+        No connected integration offers an action yet — connect one in Settings first.
+      </p>
+    );
+
+  function setField(key: string, value: string) {
+    onPatch({ intFields: { ...(a.intFields ?? {}), [key]: value } });
+  }
+
+  return (
+    <div className="mt-2 grid gap-2">
+      <select
+        value={a.intProvider ?? ""}
+        onChange={(e) => {
+          const prov = e.target.value;
+          const firstAction = providersWithActions.find((p) => p.provider === prov)?.actions[0];
+          onPatch({ intProvider: prov, intActionId: firstAction?.id ?? "", intResource: "", intFields: {} });
+        }}
+        className={inp}
+      >
+        <option value="">Select an integration…</option>
+        {providersWithActions.map((p) => (
+          <option key={p.provider} value={p.provider}>{p.name}</option>
+        ))}
+      </select>
+      {activeProvider && (
+        <select
+          value={a.intActionId ?? ""}
+          onChange={(e) => onPatch({ intActionId: e.target.value, intResource: "", intFields: {} })}
+          className={inp}
+        >
+          {activeProvider.actions.map((x) => (
+            <option key={x.id} value={x.id}>{x.label}</option>
+          ))}
+        </select>
+      )}
+      {activeAction?.needsResource && (
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-body">{activeAction.resourceLabel ?? "Resource"}</label>
+          <IntegrationResourcePicker provider={a.intProvider!} value={a.intResource ?? ""} onChange={(id) => onPatch({ intResource: id })} />
+        </div>
+      )}
+      {activeAction && (
+        <p className="text-[11px] text-muted">
+          Fields support {"{{Placeholders}}"} — e.g. {"{{Item}}"} inserts the {itemColumnName.toLowerCase()} name.
+        </p>
+      )}
+      {activeAction?.fields.map((f) =>
+        f.kind === "textarea" ? (
+          <textarea
+            key={f.key}
+            value={a.intFields?.[f.key] ?? ""}
+            onChange={(e) => setField(f.key, e.target.value)}
+            rows={3}
+            placeholder={f.placeholder ?? f.label}
+            className={`${inp} resize-y`}
+          />
+        ) : (
+          <input
+            key={f.key}
+            value={a.intFields?.[f.key] ?? ""}
+            onChange={(e) => setField(f.key, e.target.value)}
+            placeholder={f.placeholder ?? f.label}
+            className={inp}
+          />
+        )
+      )}
+    </div>
+  );
+}
+
 function DocuGenPicker({
   a,
   onPatch,
