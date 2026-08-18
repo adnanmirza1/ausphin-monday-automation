@@ -27,15 +27,25 @@ export const ITEM_TABLE_LOOP_TAG = "item_fields";
 // Loop control tags ({{#subitems}}, {{/subitems}}, {{#item_fields}}, etc.)
 // are reported separately — they are NOT data placeholders and must never
 // appear in the placeholder→column mapping UI.
-export function extractPlaceholders(templateBuf: Buffer): {
+//
+// Also validates that every {{#tag}} has a matching {{/tag}} (and vice
+// versa) for the two reserved loop tags — an unbalanced pair is exactly the
+// input that makes docxtemplater throw an opaque low-level error deep inside
+// fillDocx/generation, so it's caught here at upload time with a message
+// that names the actual problem, before generateDocumentCoreDetailed ever
+// runs against a real item.
+export type ExtractResult = {
   placeholders: string[];
   hasSubitemsLoop: boolean;
   hasItemTableLoop: boolean;
-} {
+  error?: string;
+};
+
+export function extractPlaceholders(templateBuf: Buffer): ExtractResult {
   const zip = new PizZip(templateBuf);
   const names = new Set<string>();
-  let hasSubitemsLoop = false;
-  let hasItemTableLoop = false;
+  const openCounts: Record<string, number> = { [SUBITEMS_LOOP_TAG]: 0, [ITEM_TABLE_LOOP_TAG]: 0 };
+  const closeCounts: Record<string, number> = { [SUBITEMS_LOOP_TAG]: 0, [ITEM_TABLE_LOOP_TAG]: 0 };
   for (const f of Object.keys(zip.files)) {
     if (!/word\/(document|header\d*|footer\d*)\.xml$/.test(f)) continue;
     const xml = zip.files[f].asText();
@@ -45,15 +55,33 @@ export function extractPlaceholders(templateBuf: Buffer): {
       if (!raw) continue;
       if (/^[#/^]/.test(raw)) {
         // Loop/section control tag, e.g. {{#subitems}}, {{/item_fields}}.
+        const kind = raw[0]; // "#" opens, "/" closes, "^" is docxtemplater's inverted-section (unsupported here)
         const tag = raw.slice(1).trim();
-        if (tag === SUBITEMS_LOOP_TAG) hasSubitemsLoop = true;
-        if (tag === ITEM_TABLE_LOOP_TAG) hasItemTableLoop = true;
+        if (tag in openCounts) {
+          if (kind === "#") openCounts[tag]++;
+          else if (kind === "/") closeCounts[tag]++;
+        }
         continue;
       }
       names.add(raw);
     }
   }
-  return { placeholders: [...names], hasSubitemsLoop, hasItemTableLoop };
+  const hasSubitemsLoop = openCounts[SUBITEMS_LOOP_TAG] > 0 || closeCounts[SUBITEMS_LOOP_TAG] > 0;
+  const hasItemTableLoop = openCounts[ITEM_TABLE_LOOP_TAG] > 0 || closeCounts[ITEM_TABLE_LOOP_TAG] > 0;
+
+  const mismatches: string[] = [];
+  for (const tag of [SUBITEMS_LOOP_TAG, ITEM_TABLE_LOOP_TAG]) {
+    if (openCounts[tag] !== closeCounts[tag]) {
+      mismatches.push(
+        `{{#${tag}}} (${openCounts[tag]} opening) doesn't match {{/${tag}}} (${closeCounts[tag]} closing)`
+      );
+    }
+  }
+  const error = mismatches.length
+    ? `This template's table loop tags are unbalanced: ${mismatches.join("; ")}. Every {{#${SUBITEMS_LOOP_TAG}}} or {{#${ITEM_TABLE_LOOP_TAG}}} needs exactly one matching closing tag.`
+    : undefined;
+
+  return { placeholders: [...names], hasSubitemsLoop, hasItemTableLoop, error };
 }
 
 // A fill value is either plain text, or — only under the reserved

@@ -14,7 +14,6 @@ import {
 } from "@/app/actions/updates";
 import {
   getItemDocs,
-  generateDocumentDetailed,
   sendDocForSignature,
   getItemEnvelopes,
   refreshEnvelopes,
@@ -54,6 +53,7 @@ const SIGN_STATUS_COLOR: Record<string, string> = {
   expired: "bg-muted",
 };
 import type { TemplateLite } from "./docs-button";
+import { DocuGenGenerateDrawer } from "./docugen-generate-drawer";
 
 type Dept = { id: string; name: string };
 type EmployerLite = { id: string; name: string };
@@ -137,13 +137,12 @@ function ItemPanel({
   const [body, setBody] = useState("");
   const [mentions, setMentions] = useState<string[]>([]);
   const [docs, setDocs] = useState<DocRow[] | null>(null);
-  const [genId, setGenId] = useState<string>(templates[0]?.id ?? "");
+  const [docuGenOpen, setDocuGenOpen] = useState(false);
   const [tags, setTags] = useState<ItemTag[] | null>(null);
   const [tagEmp, setTagEmp] = useState<string>(employers[0]?.id ?? "");
   const [tagStage, setTagStage] = useState<TagStage>("interview");
   const [invMsg, setInvMsg] = useState<string | null>(null);
   const [signMsg, setSignMsg] = useState<string | null>(null);
-  const [genMsg, setGenMsg] = useState<{ text: string; error: boolean } | null>(null);
   const [emails, setEmails] = useState<EmailRow[] | null>(null);
   const [emailTo, setEmailTo] = useState("");
   const [envelopes, setEnvelopes] = useState<EnvelopeRow[] | null>(null);
@@ -227,20 +226,6 @@ function ItemPanel({
     });
   }
 
-  function generate() {
-    if (!genId) return;
-    setGenMsg(null);
-    start(async () => {
-      const result = await generateDocumentDetailed(boardId, item.id, genId);
-      setDocs(await getItemDocs(boardId, item.id));
-      if (result.ok) {
-        window.open(`/doc/${result.id}`, "_blank");
-      } else {
-        setGenMsg({ text: result.error, error: true });
-        setTimeout(() => setGenMsg(null), 6000);
-      }
-    });
-  }
 
   function post() {
     const text = body.trim();
@@ -479,29 +464,12 @@ function ItemPanel({
                 No templates yet — create one via <b>📄 Docs</b> in the board header.
               </p>
             ) : (
-              <div className="flex flex-wrap items-center gap-2">
-                <select
-                  value={genId}
-                  onChange={(e) => setGenId(e.target.value)}
-                  className="flex-1 rounded-lg border border-hair px-2.5 py-1.5 text-sm outline-none focus:border-teal"
-                >
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-                <button
-                  onClick={generate}
-                  disabled={pending}
-                  className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-60 disabled:cursor-wait"
-                >
-                  {pending ? "Generating…" : "Generate"}
-                </button>
-              </div>
-            )}
-            {genMsg && (
-              <p className={`mt-1.5 text-xs font-medium ${genMsg.error ? "text-danger" : "text-grass"}`}>
-                {genMsg.text}
-              </p>
+              <button
+                onClick={() => setDocuGenOpen(true)}
+                className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep"
+              >
+                🗂 Generate document
+              </button>
             )}
             {docs && docs.length > 0 && (
               <div className="mt-2 flex flex-col gap-1.5">
@@ -751,6 +719,18 @@ function ItemPanel({
           itemId={item.id}
           onClose={() => setLogging(false)}
           onLogged={refreshEmails}
+        />
+      )}
+      {docuGenOpen && (
+        <DocuGenGenerateDrawer
+          boardId={boardId}
+          itemId={item.id}
+          itemName={item.name}
+          templates={templates}
+          onClose={() => setDocuGenOpen(false)}
+          onGenerated={() => {
+            getItemDocs(boardId, item.id).then(setDocs);
+          }}
         />
       )}
     </div>

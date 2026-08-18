@@ -208,6 +208,7 @@ export async function uploadDocxTemplate(
   let hasItemTableLoop = false;
   try {
     const detected = extractPlaceholders(buf);
+    if (detected.error) return { ok: false, error: detected.error };
     placeholders = detected.placeholders;
     hasSubitemsLoop = detected.hasSubitemsLoop;
     hasItemTableLoop = detected.hasItemTableLoop;
@@ -300,6 +301,7 @@ export async function replaceTemplateFile(
   let hasItemTableLoop = false;
   try {
     const detected = extractPlaceholders(buf);
+    if (detected.error) return { ok: false, error: detected.error };
     placeholders = detected.placeholders;
     hasSubitemsLoop = detected.hasSubitemsLoop;
     hasItemTableLoop = detected.hasItemTableLoop;

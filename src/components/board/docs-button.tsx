@@ -4,7 +4,11 @@ import { useState, useTransition } from "react";
 import type { ColumnData } from "@/lib/board-types";
 import { createTemplate, updateTemplate, deleteTemplate } from "@/app/actions/docs";
 
-export type TemplateLite = { id: string; name: string; body: string };
+// kind is optional — the legacy text-template list (this file's own query)
+// doesn't select it; only the board page's query (which feeds ItemPanel's
+// DocuGen drawer) populates it, to tell "docx" templates (previewable) apart
+// from "text" ones (not).
+export type TemplateLite = { id: string; name: string; body: string; kind?: string };
 
 export function DocsButton({
   boardId,
