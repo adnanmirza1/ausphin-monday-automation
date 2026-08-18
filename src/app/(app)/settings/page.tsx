@@ -58,11 +58,18 @@ export default async function SettingsPage() {
       note: "Point a scheduler at the endpoint with a Bearer token.",
     },
     {
-      name: "AI Workflows",
-      enables: "Prompt-to-workflow building in AI Hub → AI Workflows",
+      name: "AI Hub (Claude)",
+      enables: "AI Workflows, Vibe, AI Sidekick, and AI Agents — all use this key",
       configured: !!env.ANTHROPIC_API_KEY,
       envVars: ["ANTHROPIC_API_KEY"],
-      note: "Uses Claude to parse a plain-English prompt into a real automation.",
+      note: "Powers prompt-to-workflow building, sentiment analysis, in-context Q&A, and agent planning.",
+    },
+    {
+      name: "AI Notetaker (audio)",
+      enables: "Transcribe uploaded meeting recordings in AI Hub → AI Notetaker",
+      configured: !!env.OPENAI_API_KEY,
+      envVars: ["OPENAI_API_KEY"],
+      note: "Only needed for audio uploads — pasted text notes summarize with the Claude key above.",
     },
   ];
 

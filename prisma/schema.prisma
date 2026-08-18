@@ -34,6 +34,8 @@ model Organization {
   docusign     ConnectedDocuSignAccount?
   envelopes    DocuSignEnvelope[]
   integrations ConnectedIntegration[]
+  agentDefinitions AgentDefinition[]
+  notetakerSessions NotetakerSession[]
 }
 
 // A DocuSign account connected to an org via OAuth (Authorization Code Grant).
@@ -327,6 +329,8 @@ model Item {
   employerTags CandidateTag[]
   emails      EmailMessage[]
   envelopes   DocuSignEnvelope[]
+  sentimentScores SentimentScore[]
+  notetakerSessions NotetakerSession[]
 
   @@index([boardId])
   @@index([groupId])
@@ -623,5 +627,104 @@ model AutomationLog {
 
   @@index([automationId])
   @@index([boardId])
+  @@index([itemId])
+}
+
+// ─────────────────────────── AI Hub ───────────────────────────
+
+// Vibe — sentiment analysis on an item's text (updates + emails), scored by
+// Claude. One row per analyzed snapshot, so a re-run keeps history instead of
+// overwriting (lets a trend be shown later, and lets a failed/skipped run be
+// distinguished from "never analyzed").
+// sentiment: positive | neutral | negative | mixed
+// status: ok | skipped (nothing to analyze) | failed (AI call errored)
+model SentimentScore {
+  id         String   @id @default(cuid())
+  itemId     String
+  sentiment  String   @default("neutral")
+  score      Float    @default(0) // -1..1, negative..positive
+  summary    String   @default("") // one-line human-readable reason
+  flagged    Boolean  @default(false) // true when negative-trending, for follow-up
+  status     String   @default("ok")
+  error      String   @default("")
+  sourceKind String   @default("updates") // "updates" | "emails" | "both" — what was analyzed
+  createdAt  DateTime @default(now())
+
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
+}
+
+// AI Agents — a custom autonomous agent definition: a goal in plain English,
+// which tools/actions it's allowed to use, and whether sensitive steps need
+// human approval before running. Org-scoped (not board-scoped) since an
+// agent may act across boards via the same action vocabulary Automation
+// actions already use.
+// status: draft | active | paused
+model AgentDefinition {
+  id           String   @id @default(cuid())
+  orgId        String
+  name         String
+  goal         String   @default("") // plain-English goal/instructions
+  allowedTools String   @default("[]") // JSON array of allowed Action "type" strings (reuses Automation's Action vocabulary)
+  requireApproval Boolean @default(true) // sensitive steps (send_email, create_item_in_board, integration_action, ...) wait for approval
+  status       String   @default("draft")
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  runs AgentRun[]
+
+  @@index([orgId])
+}
+
+// One row per agent RUN. steps holds the full plan+execution trace as JSON
+// (richer than AutomationLog's single status/error, since an agent run is a
+// multi-step plan the user may need to review step-by-step).
+// status: planning | awaiting_approval | running | completed | failed
+model AgentRun {
+  id          String   @id @default(cuid())
+  agentId     String
+  input       String   @default("") // the user's request that started this run
+  steps       String   @default("[]") // JSON array: { description, actionType, status, result, error }
+  status      String   @default("planning")
+  error       String   @default("")
+  startedAt   DateTime @default(now())
+  finishedAt  DateTime?
+
+  agent AgentDefinition @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+}
+
+// AI Notetaker — a meeting/note session: either pasted text or an uploaded
+// audio file (transcribed via OPENAI_API_KEY/Whisper, kept separate from the
+// ANTHROPIC_API_KEY used for the summary itself since transcription and
+// summarization are different capabilities). Optionally attached to a board
+// item so the summary shows on that item's timeline.
+// sourceKind: text | audio
+// status: pending | transcribing | summarizing | done | failed
+model NotetakerSession {
+  id            String    @id @default(cuid())
+  orgId         String
+  itemId        String?   // optional linked board item
+  createdById   String?
+  title         String    @default("")
+  sourceKind    String    @default("text")
+  audioUrl      String    @default("") // blob URL, when sourceKind = "audio"
+  audioName     String    @default("")
+  rawText       String    @default("") // pasted notes OR the transcript, once available
+  summary       String    @default("")
+  actionItems   String    @default("[]") // JSON array of strings
+  status        String    @default("pending")
+  error         String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  item Item?        @relation(fields: [itemId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
   @@index([itemId])
 }

@@ -651,6 +651,11 @@ function ItemPanel({
 
           <div className="mb-3 border-t border-hair" />
 
+          <ItemSentimentWidget boardId={boardId} itemId={item.id} />
+          <ItemSidekickWidget boardId={boardId} itemId={item.id} />
+
+          <div className="mb-3 border-t border-hair" />
+
           {/* updates */}
           <h3 className="mb-3 text-sm font-bold text-ink">Updates</h3>
           {updates === null && <p className="text-sm text-muted">Loading…</p>}
@@ -738,6 +743,128 @@ function ItemPanel({
           onClose={() => setLogging(false)}
           onLogged={refreshEmails}
         />
+      )}
+    </div>
+  );
+}
+
+const VIBE_SENTIMENT_META: Record<string, { label: string; className: string }> = {
+  positive: { label: "Positive", className: "bg-grass/10 text-grass" },
+  neutral: { label: "Neutral", className: "bg-canvas text-muted" },
+  negative: { label: "Negative", className: "bg-danger/10 text-danger" },
+  mixed: { label: "Mixed", className: "bg-amber/10 text-amber" },
+};
+
+// Vibe (AI Hub): analyze this item's recent updates + emails for tone. Self
+// contained — loads its own latest score on mount, independent of the
+// panel's other state, so it can't interfere with updates/docs/etc.
+function ItemSentimentWidget({ boardId, itemId }: { boardId: string; itemId: string }) {
+  const [latest, setLatest] = useState<{ sentiment: string; summary: string; status: string; error: string } | null | undefined>(undefined);
+  const [pending, start] = useTransition();
+
+  useEffect(() => {
+    import("@/app/actions/vibe").then(({ getItemSentimentHistory }) =>
+      getItemSentimentHistory(boardId, itemId).then((rows) => setLatest(rows[0] ?? null))
+    );
+  }, [boardId, itemId]);
+
+  function analyze() {
+    start(async () => {
+      const { analyzeItemSentiment } = await import("@/app/actions/vibe");
+      const row = await analyzeItemSentiment(boardId, itemId);
+      setLatest(row);
+    });
+  }
+
+  const meta = latest?.sentiment ? VIBE_SENTIMENT_META[latest.sentiment] ?? VIBE_SENTIMENT_META.neutral : null;
+
+  return (
+    <div className="mb-3 flex items-center gap-2 rounded-xl border border-hair bg-canvas/40 p-3">
+      <span className="text-lg">💬</span>
+      <div className="min-w-0 flex-1">
+        {latest === undefined && <p className="text-xs text-muted">Loading sentiment…</p>}
+        {latest === null && <p className="text-xs text-muted">Not analyzed yet.</p>}
+        {latest && latest.status === "ok" && meta && (
+          <div className="flex items-center gap-2">
+            <span className={`flex-none rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.className}`}>
+              {meta.label}
+            </span>
+            <p className="min-w-0 truncate text-xs text-body">{latest.summary}</p>
+          </div>
+        )}
+        {latest && latest.status === "skipped" && <p className="text-xs text-muted">{latest.error}</p>}
+        {latest && latest.status === "failed" && <p className="text-xs text-danger">{latest.error}</p>}
+      </div>
+      <button
+        onClick={analyze}
+        disabled={pending}
+        className="flex-none rounded-lg border border-hair px-2.5 py-1 text-xs font-medium text-body hover:bg-canvas disabled:opacity-60"
+      >
+        {pending ? "Analyzing…" : "Analyze sentiment"}
+      </button>
+    </div>
+  );
+}
+
+type SidekickMsg = { role: "user" | "assistant"; text: string };
+
+// AI Sidekick (AI Hub): quick in-context Q&A about this one item, grounded
+// in its real field values + recent updates (see askSidekick). Not
+// persisted between sessions — a lightweight helper, not a saved thread.
+function ItemSidekickWidget({ boardId, itemId }: { boardId: string; itemId: string }) {
+  const [open, setOpen] = useState(false);
+  const [question, setQuestion] = useState("");
+  const [messages, setMessages] = useState<SidekickMsg[]>([]);
+  const [pending, start] = useTransition();
+
+  function ask() {
+    const q = question.trim();
+    if (!q) return;
+    setQuestion("");
+    setMessages((m) => [...m, { role: "user", text: q }]);
+    start(async () => {
+      const { askSidekick } = await import("@/app/actions/sidekick");
+      const res = await askSidekick(boardId, itemId, q);
+      setMessages((m) => [...m, { role: "assistant", text: res.ok ? res.answer : `⚠ ${res.error}` }]);
+    });
+  }
+
+  return (
+    <div className="mb-3 rounded-xl border border-hair bg-canvas/40 p-3">
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 text-left">
+        <span className="text-lg">✦</span>
+        <span className="flex-1 text-xs font-semibold text-ink">AI Sidekick — ask about this item</span>
+        <span className="flex-none text-xs text-muted">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="mt-2 grid gap-2">
+          {messages.length > 0 && (
+            <div className="flex max-h-48 flex-col gap-2 overflow-y-auto scroll-thin rounded-lg bg-white p-2">
+              {messages.map((m, i) => (
+                <p key={i} className={`text-xs ${m.role === "user" ? "font-semibold text-ink" : "text-body"}`}>
+                  {m.role === "user" ? "You: " : "Sidekick: "}
+                  {m.text}
+                </p>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-1.5">
+            <input
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && ask()}
+              placeholder="e.g. What's the current status?"
+              className="flex-1 rounded-lg border border-hair bg-white px-2.5 py-1.5 text-xs outline-none focus:border-teal"
+            />
+            <button
+              onClick={ask}
+              disabled={pending || !question.trim()}
+              className="flex-none rounded-lg bg-teal px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
+            >
+              {pending ? "…" : "Ask"}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
