@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireBoardEditor } from "@/lib/guard";
+import { requireBoardEditor, requireBoardAccessAsUser } from "@/lib/guard";
 
 function touch(boardId: string) {
   revalidatePath(`/boards/${boardId}/automations`);
@@ -108,4 +108,47 @@ export async function moveAutomation(
     await db.automation.update({ where: { id: ids[i] }, data: { position: i } });
   }
   touch(boardId);
+}
+
+export type AutomationRunRow = {
+  id: string;
+  status: string;
+  error: string;
+  attempts: number;
+  itemId: string | null;
+  itemName: string | null;
+  startedAt: string;
+  finishedAt: string;
+};
+
+// Recent execution history for one automation (Requirement: execution log —
+// "did my automation run, and did it work"). Board-scoped through the
+// automation itself so a caller can't read another board's run history by
+// guessing an automationId.
+export async function getAutomationRuns(
+  boardId: string,
+  automationId: string,
+  limit = 25
+): Promise<AutomationRunRow[]> {
+  await requireBoardAccessAsUser(boardId);
+  const runs = await db.automationLog.findMany({
+    where: { automationId, boardId },
+    orderBy: { startedAt: "desc" },
+    take: Math.min(limit, 100),
+  });
+  const itemIds = [...new Set(runs.map((r) => r.itemId).filter((x): x is string => !!x))];
+  const items = itemIds.length
+    ? await db.item.findMany({ where: { id: { in: itemIds } }, select: { id: true, name: true } })
+    : [];
+  const itemName = new Map(items.map((i) => [i.id, i.name]));
+  return runs.map((r) => ({
+    id: r.id,
+    status: r.status,
+    error: r.error,
+    attempts: r.attempts,
+    itemId: r.itemId,
+    itemName: r.itemId ? itemName.get(r.itemId) ?? null : null,
+    startedAt: r.startedAt.toISOString(),
+    finishedAt: r.finishedAt.toISOString(),
+  }));
 }

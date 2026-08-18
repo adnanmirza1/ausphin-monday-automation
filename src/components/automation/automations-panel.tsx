@@ -10,6 +10,8 @@ import {
   deleteAutomation,
   renameFolder,
   moveAutomation,
+  getAutomationRuns,
+  type AutomationRunRow,
 } from "@/app/actions/automation";
 import { listDocuSignTemplates, type DsTemplateRow } from "@/app/actions/docs";
 import { DRAG_OVER_CLASS, DRAGGING_CLASS } from "@/components/ui/popover";
@@ -410,6 +412,7 @@ function AutomationCard({
 }) {
   const [, start] = useTransition();
   const [over, setOver] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const { when, then } = describe(auto.trigger, auto.action, columns, groups, departments, templates);
 
   return (
@@ -459,6 +462,9 @@ function AutomationCard({
           on={auto.enabled}
           onChange={(v) => start(() => void toggleAutomation(boardId, auto.id, v))}
         />
+        <button onClick={() => setHistoryOpen(true)} className="text-xs text-muted hover:text-teal">
+          History
+        </button>
         <button onClick={onEdit} className="text-xs text-teal hover:underline">
           Edit
         </button>
@@ -468,6 +474,100 @@ function AutomationCard({
         >
           Delete
         </button>
+      </div>
+      {historyOpen && (
+        <AutomationHistoryPanel boardId={boardId} automation={auto} onClose={() => setHistoryOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+const STATUS_META: Record<string, { label: string; className: string }> = {
+  success: { label: "Success", className: "bg-grass/10 text-grass" },
+  partial: { label: "Partial", className: "bg-amber/10 text-amber" },
+  failed: { label: "Failed", className: "bg-danger/10 text-danger" },
+};
+
+function timeAgo(iso: string): string {
+  const d = new Date(iso).getTime();
+  const s = Math.floor((Date.now() - d) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+// Execution history for one automation (Requirement: "did my automation
+// run, and did it work" without digging through item-timeline notes).
+function AutomationHistoryPanel({
+  boardId,
+  automation,
+  onClose,
+}: {
+  boardId: string;
+  automation: Auto;
+  onClose: () => void;
+}) {
+  const [runs, setRuns] = useState<AutomationRunRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    getAutomationRuns(boardId, automation.id)
+      .then(setRuns)
+      .catch(() => setErr("Could not load run history."));
+  }, [boardId, automation.id]);
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-4">
+      <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 flex max-h-[80vh] w-full max-w-lg flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
+        <div className="flex items-center justify-between">
+          <div className="min-w-0">
+            <h2 className="truncate text-lg font-bold text-ink">History — {automation.name}</h2>
+            <p className="text-xs text-muted">Most recent runs, newest first.</p>
+          </div>
+          <button onClick={onClose} className="grid h-7 w-7 flex-none place-items-center rounded-lg text-muted hover:bg-canvas" aria-label="Close">
+            ✕
+          </button>
+        </div>
+
+        <div className="mt-3 flex-1 overflow-y-auto scroll-thin">
+          {err && <p className="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">{err}</p>}
+          {!err && runs === null && <p className="py-8 text-center text-sm text-muted">Loading…</p>}
+          {!err && runs?.length === 0 && (
+            <p className="rounded-lg border border-dashed border-hair py-8 text-center text-sm text-muted">
+              No runs yet — this automation hasn&rsquo;t triggered.
+            </p>
+          )}
+          {!err && runs && runs.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {runs.map((r) => {
+                const meta = STATUS_META[r.status] ?? { label: r.status, className: "bg-canvas text-muted" };
+                return (
+                  <div key={r.id} className="rounded-xl border border-hair p-3">
+                    <div className="flex items-center gap-2">
+                      <span className={`flex-none rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.className}`}>
+                        {meta.label}
+                      </span>
+                      {r.itemName && (
+                        <span className="min-w-0 truncate text-xs font-medium text-ink" title={r.itemName}>
+                          {r.itemName}
+                        </span>
+                      )}
+                      {r.attempts > 1 && (
+                        <span className="flex-none rounded-full bg-canvas px-1.5 py-0.5 text-[10px] text-muted" title="Retried before settling">
+                          {r.attempts} attempts
+                        </span>
+                      )}
+                      <span className="ml-auto flex-none text-[11px] text-muted">{timeAgo(r.startedAt)}</span>
+                    </div>
+                    {r.error && <p className="mt-1.5 text-xs text-body">{r.error}</p>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

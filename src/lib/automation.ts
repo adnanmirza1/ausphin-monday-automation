@@ -222,6 +222,9 @@ async function applyFieldMapping(
 }
 
 // Runs a single non-recursive pass of automations for the board & event.
+// Every automation that matches gets exactly one AutomationLog row per run
+// (Requirement: execution history), so "did my automation run, and did it
+// work" is answerable without digging through item-timeline notes.
 export async function runAutomations(event: AutomationEvent) {
   const automations = await db.automation.findMany({
     where: { boardId: event.boardId, enabled: true },
@@ -232,15 +235,88 @@ export async function runAutomations(event: AutomationEvent) {
     const stored = parse<StoredAction>(a.action);
     if (!trigger || !stored) continue;
     if (!matches(trigger, event)) continue;
+
+    const startedAt = new Date();
+    let status: "success" | "partial" | "failed" = "success";
+    let error = "";
+    let attempts = 1;
+
     // Run every THEN step in order (supports multiple actions per rule).
+    // A thrown/unexpected error in one step doesn't abort the remaining
+    // steps — each is independently attempted and its outcome folded into
+    // the run's overall status, same principle as the engine's existing
+    // per-action "skip and continue" behavior.
     for (const action of actionList(stored)) {
-      await execute(action, event);
+      try {
+        const outcome = await execute(action, event);
+        attempts += outcome.attempts - 1;
+        if (outcome.status === "failed" && status !== "failed") {
+          status = "failed";
+          error = outcome.error ?? error;
+        } else if (outcome.status === "skipped" && status === "success") {
+          status = "partial";
+          error = outcome.error ?? error;
+        }
+      } catch (e) {
+        status = "failed";
+        error = e instanceof Error ? e.message : String(e);
+      }
     }
+
+    await db.automationLog
+      .create({
+        data: {
+          automationId: a.id,
+          automationName: a.name,
+          boardId: a.boardId,
+          itemId: event.itemId,
+          status,
+          error,
+          attempts,
+          startedAt,
+          finishedAt: new Date(),
+        },
+      })
+      .catch((e) => console.error("[automation:log]", e));
   }
 }
 
-async function execute(action: Action, event: AutomationEvent) {
+// Per-action outcome, used only to roll up a run's overall status/error in
+// runAutomations — actions themselves still post their own human-readable
+// notes to the item timeline via logAutomation/db.update.create as before.
+type ActionOutcome = { status: "success" | "skipped" | "failed"; error?: string; attempts: number };
+
+// Retry wrapper for the two actions that call an external service and can
+// fail transiently (network blip, provider hiccup): send_email, send_docusign.
+// NOT used for pure-DB actions, where retrying risks duplicating a side
+// effect (e.g. re-running move_to_group is harmless, but resending an email
+// is not idempotent — retrying the SEND, not the whole action, is what's
+// safe here). Both underlying calls (sendMail, DocuSign send) never throw —
+// they resolve to { ok, error } — so this inspects `.ok` to decide whether
+// to retry, rather than relying on a thrown exception. Two attempts total,
+// a short delay between them; the second failure is what gets reported.
+async function withRetryResult<T extends { ok: boolean; error?: string }>(
+  fn: () => Promise<T>,
+  maxAttempts = 2
+): Promise<{ result: T; attempts: number }> {
+  let last: T;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    last = await fn();
+    if (last.ok || attempt === maxAttempts) return { result: last, attempts: attempt };
+    await new Promise((r) => setTimeout(r, 500 * attempt));
+  }
+  // Unreachable (loop always returns on the final attempt), but keeps TS
+  // happy about a guaranteed return.
+  return { result: last!, attempts: maxAttempts };
+}
+
+async function execute(action: Action, event: AutomationEvent): Promise<ActionOutcome> {
   const itemId = event.itemId;
+  // Set by any branch that hits a "nothing to do" / validation skip (the
+  // same points that already post a "skipped — ..." note); everything else
+  // defaults to success unless the branch throws, which the caller in
+  // runAutomations catches and records as "failed".
+  const outcome: ActionOutcome = { status: "success", attempts: 1 };
 
   switch (action.type) {
     case "move_to_group": {
@@ -267,7 +343,7 @@ async function execute(action: Action, event: AutomationEvent) {
         where: { id: action.columnId, type: "date" },
         select: { id: true },
       });
-      if (!col) break;
+      if (!col) { outcome.status = "skipped"; outcome.error = "target column is not a date column"; break; }
       let dateStr = "";
       const today = new Date();
       const iso = (d: Date) =>
@@ -285,7 +361,7 @@ async function execute(action: Action, event: AutomationEvent) {
       } else {
         dateStr = action.date ?? "";
       }
-      if (!dateStr) break;
+      if (!dateStr) { outcome.status = "skipped"; outcome.error = "no date resolved"; break; }
       // Upsert only (no cascade) — mirrors set_status, avoids trigger loops.
       await db.cell.upsert({
         where: { itemId_columnId: { itemId, columnId: action.columnId } },
@@ -302,7 +378,7 @@ async function execute(action: Action, event: AutomationEvent) {
         where: { id: action.columnId },
         select: { type: true },
       });
-      if (!col) break;
+      if (!col) { outcome.status = "skipped"; outcome.error = "target column not found"; break; }
       const isPerson = col.type === "person";
       await db.cell.upsert({
         where: { itemId_columnId: { itemId, columnId: action.columnId } },
@@ -336,7 +412,7 @@ async function execute(action: Action, event: AutomationEvent) {
         where: { departmentId: action.departmentId, status: { not: "inactive" } },
         select: { id: true },
       });
-      if (people.length === 0) break;
+      if (people.length === 0) { outcome.status = "skipped"; outcome.error = "no active people in the department"; break; }
       // pick the person with the fewest current assignments in this column
       const counts = await Promise.all(
         people.map(async (p) => ({
@@ -358,7 +434,11 @@ async function execute(action: Action, event: AutomationEvent) {
 
     case "generate_document": {
       const result = await generateDocumentCoreDetailed(itemId, action.templateId);
-      if (!result.ok) await logAutomation(itemId, `⚡ Generate document: skipped — ${result.error}`);
+      if (!result.ok) {
+        await logAutomation(itemId, `⚡ Generate document: skipped — ${result.error}`);
+        outcome.status = "skipped";
+        outcome.error = result.error;
+      }
       break;
     }
 
@@ -367,7 +447,7 @@ async function execute(action: Action, event: AutomationEvent) {
         where: { id: itemId },
         include: { cells: { include: { column: true } }, board: { include: { environment: true } } },
       });
-      if (!it) break;
+      if (!it) { outcome.status = "skipped"; outcome.error = "item not found"; break; }
       const emailCell = it.cells.find((c) => c.column.type === "email");
       const amountCell = action.amountColumnId
         ? it.cells.find((c) => c.columnId === action.amountColumnId)
@@ -398,7 +478,7 @@ async function execute(action: Action, event: AutomationEvent) {
           board: { include: { environment: true } },
         },
       });
-      if (!it) break;
+      if (!it) { outcome.status = "skipped"; outcome.error = "item not found"; break; }
       // Recipient = chosen email column, else the first email column on the item.
       const toCell = action.toColumnId
         ? it.cells.find((c) => c.columnId === action.toColumnId)
@@ -411,18 +491,31 @@ async function execute(action: Action, event: AutomationEvent) {
       let delivered = false;
       let sendError: string | undefined;
       if (to) {
-        const res = await sendMail({
-          from,
-          to,
-          subject: subject || "(no subject)",
-          html: `<p>${body.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br/>")}</p>`,
-          text: body,
-        });
+        // Retried — a transient SMTP/network blip shouldn't need a human to
+        // notice and manually resend; a real rejection (bad address, auth
+        // failure) fails the same way on both attempts and is reported once.
+        // sendMail() never throws (it returns {ok:false, error} on failure),
+        // so withRetryResult inspects .ok itself rather than relying on a
+        // thrown exception to know when to retry.
+        const { result: res, attempts } = await withRetryResult(() =>
+          sendMail({
+            from,
+            to,
+            subject: subject || "(no subject)",
+            html: `<p>${body.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br/>")}</p>`,
+            text: body,
+          })
+        );
+        outcome.attempts = attempts;
         delivered = res.ok === true;
         sendError = res.error;
       }
       // Honest status so a silent non-delivery is visible in the history.
       const status = !to ? "skipped" : delivered ? "sent" : configured ? "failed" : "logged";
+      if (status === "skipped" || status === "failed") {
+        outcome.status = status;
+        outcome.error = !to ? "no recipient email found" : sendError;
+      }
       // Record what happened on the item's timeline.
       await db.update.create({
         data: {
@@ -456,7 +549,7 @@ async function execute(action: Action, event: AutomationEvent) {
         where: { id: itemId },
         include: { cells: { include: { column: true } }, board: { include: { environment: true } } },
       });
-      if (!it) break;
+      if (!it) { outcome.status = "skipped"; outcome.error = "item not found"; break; }
       const orgId = it.board.environment.orgId;
       const { sendEnvelopeFromDocument, sendEnvelopeFromTemplate, getDsAccount } = await import("@/lib/docusign");
       const account = await getDsAccount(orgId);
@@ -464,6 +557,8 @@ async function execute(action: Action, event: AutomationEvent) {
         db.update.create({ data: { itemId, body: `✒ DocuSign: ${msg}`, mentions: "[]" } });
       if (!account) {
         await note("skipped — DocuSign not connected.");
+        outcome.status = "skipped";
+        outcome.error = "DocuSign not connected";
         break;
       }
       // Recipient
@@ -477,19 +572,27 @@ async function execute(action: Action, event: AutomationEvent) {
       const recipientName = (nameCell?.value ?? it.name).trim();
       if (!recipientEmail) {
         await note("skipped — no recipient email.");
+        outcome.status = "skipped";
+        outcome.error = "no recipient email";
         break;
       }
       const subject = await renderTemplate(itemId, action.subject || `Please sign: ${it.name}`);
       const message = await renderTemplate(itemId, action.message || "");
 
       let res: { ok: boolean; envelopeId?: string; error?: string };
+      // Retried — a transient DocuSign API blip shouldn't require a human
+      // to notice and manually resend.
       if (action.docusignTemplateId) {
-        res = await sendEnvelopeFromTemplate(orgId, {
-          templateId: action.docusignTemplateId,
-          recipients: [{ email: recipientEmail, name: recipientName }],
-          subject,
-          message,
-        });
+        const { result, attempts } = await withRetryResult(() =>
+          sendEnvelopeFromTemplate(orgId, {
+            templateId: action.docusignTemplateId!,
+            recipients: [{ email: recipientEmail, name: recipientName }],
+            subject,
+            message,
+          })
+        );
+        res = result;
+        outcome.attempts = attempts;
       } else {
         // Send a document from a file column (latest file).
         const fileCell = action.fileColumnId
@@ -499,6 +602,8 @@ async function execute(action: Action, event: AutomationEvent) {
         const file = files[files.length - 1];
         if (!file?.url) {
           await note("skipped — no document found in the file column.");
+          outcome.status = "skipped";
+          outcome.error = "no document in file column";
           break;
         }
         const { fetchFileBuffer } = await import("@/lib/blob-storage");
@@ -507,20 +612,28 @@ async function execute(action: Action, event: AutomationEvent) {
           base64 = (await fetchFileBuffer(file.url)).toString("base64");
         } catch {
           await note("skipped — could not read the document file.");
+          outcome.status = "skipped";
+          outcome.error = "could not read document file";
           break;
         }
         const ext = /\.pdf$/i.test(file.name) ? "pdf" : "docx";
-        res = await sendEnvelopeFromDocument(orgId, {
-          documentBase64: base64,
-          documentName: file.name,
-          fileExtension: ext,
-          recipients: [{ email: recipientEmail, name: recipientName }],
-          subject,
-          message,
-        });
+        const { result, attempts } = await withRetryResult(() =>
+          sendEnvelopeFromDocument(orgId, {
+            documentBase64: base64,
+            documentName: file.name,
+            fileExtension: ext,
+            recipients: [{ email: recipientEmail, name: recipientName }],
+            subject,
+            message,
+          })
+        );
+        res = result;
+        outcome.attempts = attempts;
       }
       if (!res.ok) {
         await note(`failed — ${res.error ?? "unknown error"}`);
+        outcome.status = "failed";
+        outcome.error = res.error ?? "unknown error";
         break;
       }
       await db.docuSignEnvelope.create({
@@ -555,7 +668,7 @@ async function execute(action: Action, event: AutomationEvent) {
         where: { id: itemId },
         include: { cells: { include: { column: true, person: true } }, board: { include: { columns: true } } },
       });
-      if (!src) break;
+      if (!src) { outcome.status = "skipped"; outcome.error = "item not found"; break; }
       // Validate the destination board exists and belongs to the same org as
       // the source board — never trust a stored boardId blindly (it was
       // chosen by a user with access at save time, but boards can be
@@ -571,6 +684,8 @@ async function execute(action: Action, event: AutomationEvent) {
       });
       if (!destBoard || destBoard.archivedAt || destBoard.environment.orgId !== srcOrg?.environment.orgId) {
         await logAutomation(itemId, `⚡ Create item in board: skipped — destination board unavailable.`);
+        outcome.status = "skipped";
+        outcome.error = "destination board unavailable";
         break;
       }
       const targetGroup = await db.group.findFirst({
@@ -579,6 +694,8 @@ async function execute(action: Action, event: AutomationEvent) {
       });
       if (!targetGroup) {
         await logAutomation(itemId, `⚡ Create item in board: skipped — "${destBoard.name}" has no group to receive it.`);
+        outcome.status = "skipped";
+        outcome.error = `"${destBoard.name}" has no group to receive it`;
         break;
       }
       const count = await db.item.count({ where: { groupId: targetGroup.id } });
@@ -640,21 +757,27 @@ async function execute(action: Action, event: AutomationEvent) {
         : await getEmailColumn(boardId);
       if (!emailColumn) {
         await logAutomation(itemId, `⚡ Create subitem: skipped — no email column configured on this board.`);
+        outcome.status = "skipped";
+        outcome.error = "no email column configured on this board";
         break;
       }
       const triggering = await db.item.findUnique({
         where: { id: itemId },
         select: { id: true, name: true, parentId: true, cells: { where: { columnId: emailColumn.id }, select: { value: true } } },
       });
-      if (!triggering) break;
+      if (!triggering) { outcome.status = "skipped"; outcome.error = "item not found"; break; }
       const email = normalizeEmail(triggering.cells[0]?.value);
       if (!email) {
         await logAutomation(itemId, `⚡ Create subitem: skipped — this item has no email in "${emailColumn.name}".`);
+        outcome.status = "skipped";
+        outcome.error = `no email in "${emailColumn.name}"`;
         break;
       }
       const parent = await findMatchingParent(boardId, emailColumn.id, email);
       if (!parent) {
         await logAutomation(itemId, `⚡ Create subitem: skipped — no existing item matches "${email}".`);
+        outcome.status = "skipped";
+        outcome.error = `no existing item matches "${email}"`;
         break;
       }
       // The triggering item IS the record to (re)nest — if it's already the
@@ -663,7 +786,7 @@ async function execute(action: Action, event: AutomationEvent) {
       // the triggering item itself is reparented under the match — it must
       // NOT be duplicated as a fresh copy, or the board would end up with
       // both the original item AND a new subitem carrying the same data.
-      if (parent.id === itemId || triggering.parentId === parent.id) break;
+      if (parent.id === itemId || triggering.parentId === parent.id) { outcome.status = "skipped"; outcome.error = "already nested under this parent"; break; }
       await db.item.update({
         where: { id: itemId },
         data: { parentId: parent.id, groupId: parent.groupId },
@@ -682,7 +805,7 @@ async function execute(action: Action, event: AutomationEvent) {
         where: { id: itemId },
         include: { cells: { include: { column: true, person: true } }, board: { include: { columns: true } } },
       });
-      if (!src) break;
+      if (!src) { outcome.status = "skipped"; outcome.error = "item not found"; break; }
 
       const destBoard = await db.board.findUnique({
         where: { id: action.boardId },
@@ -694,6 +817,8 @@ async function execute(action: Action, event: AutomationEvent) {
       });
       if (!destBoard || destBoard.archivedAt || destBoard.environment.orgId !== srcOrg?.environment.orgId) {
         await logAutomation(itemId, `⚡ Create subitem on another board: skipped — destination board unavailable.`);
+        outcome.status = "skipped";
+        outcome.error = "destination board unavailable";
         break;
       }
 
@@ -704,17 +829,23 @@ async function execute(action: Action, event: AutomationEvent) {
       const email = normalizeEmail(srcEmail?.value);
       if (!email) {
         await logAutomation(itemId, `⚡ Create subitem on another board: skipped — no email to match on.`);
+        outcome.status = "skipped";
+        outcome.error = "no email to match on";
         break;
       }
 
       const destEmailCol = destBoard.columns.find((c) => c.type === "email");
       if (!destEmailCol) {
         await logAutomation(itemId, `⚡ Create subitem on another board: skipped — "${destBoard.name}" has no email column.`);
+        outcome.status = "skipped";
+        outcome.error = `"${destBoard.name}" has no email column`;
         break;
       }
       const parent = await findMatchingParent(destBoard.id, destEmailCol.id, email);
       if (!parent) {
         await logAutomation(itemId, `⚡ Create subitem on another board: skipped — no item on "${destBoard.name}" matches "${email}".`);
+        outcome.status = "skipped";
+        outcome.error = `no item on "${destBoard.name}" matches "${email}"`;
         break;
       }
 
@@ -727,6 +858,8 @@ async function execute(action: Action, event: AutomationEvent) {
       });
       if (alreadyCreated) {
         await logAutomation(itemId, `⚡ Create subitem on another board: skipped — already added under "${parent.name}".`);
+        outcome.status = "skipped";
+        outcome.error = `already added under "${parent.name}"`;
         break;
       }
 
@@ -752,4 +885,6 @@ async function execute(action: Action, event: AutomationEvent) {
       break;
     }
   }
+
+  return outcome;
 }

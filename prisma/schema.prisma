@@ -568,5 +568,32 @@ model Automation {
   action    String   @default("{}") // JSON — single Action or { type:"multi", actions:[] }
   createdAt DateTime @default(now())
 
-  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  board Board          @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  runs  AutomationLog[]
+}
+
+// One row per automation RUN (a run may execute several THEN-steps).
+// automationId is nullable + automationName is a snapshot so history
+// survives the automation itself being deleted later. Gives automations a
+// real, queryable execution history beyond the item-timeline notes the
+// engine also posts — answers "did my automation run, and did it work".
+// status: success (every step completed) | partial (some steps skipped,
+// e.g. "no recipient email") | failed (a step threw/errored)
+model AutomationLog {
+  id             String   @id @default(cuid())
+  automationId   String?
+  automationName String   @default("")
+  boardId        String
+  itemId         String?
+  status         String   @default("success")
+  error          String   @default("")
+  attempts       Int      @default(1) // 1 = no retry needed; >1 = retried before settling
+  startedAt      DateTime @default(now())
+  finishedAt     DateTime @default(now())
+
+  automation Automation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
+
+  @@index([automationId])
+  @@index([boardId])
+  @@index([itemId])
 }
