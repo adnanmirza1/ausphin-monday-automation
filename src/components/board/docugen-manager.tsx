@@ -70,7 +70,7 @@ function DocuGenModal({
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   const refresh = () => getDocuGenData(boardId).then(setData);
   useEffect(() => {
@@ -152,7 +152,7 @@ function DocuGenModal({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 flex h-[85vh] w-full max-w-4xl flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 flex h-[85vh] w-full max-w-4xl animate-rise flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-ink">🗂 DocuGen</h2>
@@ -218,9 +218,13 @@ function DocuGenModal({
             {sel.size > 0 && (
               <div className="mt-2 flex items-center gap-2 rounded-lg bg-canvas px-3 py-1.5 text-xs">
                 <span className="font-semibold text-body">{sel.size} selected</span>
-                <button onClick={() => bulkActive(true)} className="text-teal hover:underline">Activate</button>
-                <button onClick={() => bulkActive(false)} className="text-teal hover:underline">Deactivate</button>
-                <button onClick={() => setSel(new Set())} className="ml-auto text-muted hover:text-ink">Clear</button>
+                <button onClick={() => bulkActive(true)} disabled={pending} className="text-teal hover:underline disabled:opacity-60 disabled:cursor-wait">
+                  {pending ? "Working…" : "Activate"}
+                </button>
+                <button onClick={() => bulkActive(false)} disabled={pending} className="text-teal hover:underline disabled:opacity-60 disabled:cursor-wait">
+                  {pending ? "Working…" : "Deactivate"}
+                </button>
+                <button onClick={() => setSel(new Set())} disabled={pending} className="ml-auto text-muted hover:text-ink disabled:opacity-60">Clear</button>
               </div>
             )}
 
@@ -253,11 +257,18 @@ function DocuGenModal({
                         </p>
                       </div>
                       <div className="flex flex-none items-center gap-2 text-xs">
-                        <button onClick={() => setEditingId(t.id)} className="text-teal hover:underline">Edit</button>
-                        <button onClick={() => start(async () => { await duplicateTemplate(boardId, t.id); await refresh(); })} className="text-muted hover:text-teal">Duplicate</button>
+                        <button onClick={() => setEditingId(t.id)} disabled={pending} className="text-teal hover:underline disabled:opacity-60">Edit</button>
+                        <button
+                          onClick={() => start(async () => { await duplicateTemplate(boardId, t.id); await refresh(); })}
+                          disabled={pending}
+                          className="text-muted hover:text-teal disabled:opacity-60 disabled:cursor-wait"
+                        >
+                          Duplicate
+                        </button>
                         <button
                           onClick={() => start(async () => { await setTemplatesActive(boardId, [t.id], !t.active); await refresh(); })}
-                          className="text-muted hover:text-teal"
+                          disabled={pending}
+                          className="text-muted hover:text-teal disabled:opacity-60 disabled:cursor-wait"
                         >
                           {t.active ? "Deactivate" : "Activate"}
                         </button>
@@ -267,7 +278,8 @@ function DocuGenModal({
                             if (t.usageCount === 0 && !confirm(`Delete "${t.name}"?`)) return;
                             start(async () => { await deleteTemplate(boardId, t.id); await refresh(); });
                           }}
-                          className="text-muted hover:text-danger"
+                          disabled={pending}
+                          className="text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait"
                         >
                           Delete
                         </button>

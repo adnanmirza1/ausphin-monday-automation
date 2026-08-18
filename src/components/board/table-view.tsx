@@ -158,7 +158,7 @@ function BulkBar({
   clear: () => void;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   const ids = [...selected];
 
   return createPortal(
@@ -174,11 +174,12 @@ function BulkBar({
           <button
             ref={p.ref}
             onClick={p.onClick}
+            disabled={pending}
             aria-expanded={p["aria-expanded"]}
             aria-haspopup={p["aria-haspopup"]}
-            className="rounded-lg px-3 py-1.5 text-sm text-body hover:bg-canvas"
+            className="rounded-lg px-3 py-1.5 text-sm text-body hover:bg-canvas disabled:opacity-60 disabled:cursor-wait"
           >
-            ⇄ Move to
+            {pending ? "Working…" : "⇄ Move to"}
           </button>
         )}
         panelClassName="rounded-lg border border-hair bg-white p-1 shadow-pop overflow-y-auto scroll-thin"
@@ -209,13 +210,18 @@ function BulkBar({
               clear();
             });
         }}
-        className="rounded-lg px-3 py-1.5 text-sm font-medium text-danger hover:bg-danger/10"
+        disabled={pending}
+        className="rounded-lg px-3 py-1.5 text-sm font-medium text-danger hover:bg-danger/10 disabled:opacity-60 disabled:cursor-wait"
       >
-        🗑 Delete
+        {pending ? "Deleting…" : "🗑 Delete"}
       </button>
 
       <span className="mx-1 h-5 w-px bg-hair" />
-      <button onClick={clear} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-canvas">
+      <button
+        onClick={clear}
+        disabled={pending}
+        className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-canvas disabled:opacity-60"
+      >
         Clear
       </button>
     </div>,
@@ -256,7 +262,7 @@ function GroupBlock({
   const [colorOpen, setColorOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   const sel = useSel();
   const rowWidth = NAME_W + board.columns.length * COL_W;
   const allSel = group.items.length > 0 && group.items.every((it) => sel?.selected.has(it.id));
@@ -396,10 +402,13 @@ function GroupBlock({
               if (confirm(`Delete group "${group.name}" and its items?`))
                 start(() => void deleteGroup(board.id, group.id));
             }}
-            className="ml-1 hidden text-xs text-muted hover:text-danger group-hover:inline"
+            disabled={pending}
+            className={`ml-1 text-xs text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait ${
+              pending ? "inline" : "hidden group-hover:inline"
+            }`}
             title="Delete group"
           >
-            ✕
+            {pending ? "…" : "✕"}
           </button>
         )}
       </div>
@@ -594,7 +603,7 @@ function Row({
   const [name, setName] = useState(item.name);
   const [over, setOver] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   const { open } = useBoardUI();
   const sel = useSel();
   const tint = tintFor(board, item, colorBy);
@@ -709,7 +718,8 @@ function Row({
                 if (confirm(`Delete "${item.name}"? This can't be undone.`))
                   start(() => void deleteItem(board.id, item.id));
               }}
-              className="grid h-6 w-6 flex-none place-items-center rounded-md text-muted hover:bg-danger/10 hover:text-danger"
+              disabled={pending}
+              className="grid h-6 w-6 flex-none place-items-center rounded-md text-muted hover:bg-danger/10 hover:text-danger disabled:opacity-60 disabled:cursor-wait"
               title="Delete item"
               aria-label="Delete item"
             >
@@ -778,7 +788,7 @@ function SubitemRow({
   const [name, setName] = useState(subitem.name);
   const [over, setOver] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   const { open } = useBoardUI();
 
   return (
@@ -845,7 +855,8 @@ function SubitemRow({
                 if (confirm(`Delete "${subitem.name}"? This can't be undone.`))
                   start(() => void deleteItem(board.id, subitem.id));
               }}
-              className="grid h-6 w-6 flex-none place-items-center rounded-md text-muted hover:bg-danger/10 hover:text-danger"
+              disabled={pending}
+              className="grid h-6 w-6 flex-none place-items-center rounded-md text-muted hover:bg-danger/10 hover:text-danger disabled:opacity-60 disabled:cursor-wait"
               title="Delete subitem"
               aria-label="Delete subitem"
             >
@@ -968,7 +979,7 @@ function ColumnHeader({
     width: 208,
     maxHeight: 420,
   });
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   function openMenu() {
     setSub("main");
@@ -1050,6 +1061,7 @@ function ColumnHeader({
           ref={menuBtnRef}
           type="button"
           draggable={false}
+          disabled={pending}
           onDragStart={(e) => e.preventDefault()}
           onClick={(e) => {
             e.stopPropagation();
@@ -1059,7 +1071,7 @@ function ColumnHeader({
           aria-expanded={menu}
           aria-haspopup="menu"
           title="Column options"
-          className={`absolute right-1 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded text-sm leading-none text-muted transition-opacity hover:bg-canvas hover:text-body ${
+          className={`absolute right-1 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded text-sm leading-none text-muted transition-opacity hover:bg-canvas hover:text-body disabled:cursor-wait disabled:opacity-60 ${
             menu ? "opacity-100" : "opacity-0 group-hover:opacity-100"
           }`}
         >
@@ -1271,7 +1283,7 @@ function CustomPermPanel({
   const [departments, setDepartments] = useState<string[]>(initial.departments);
   const [users, setUsers] = useState<string[]>(initial.users);
   const [q, setQ] = useState("");
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   const toggle = (
     id: string,
@@ -1362,9 +1374,10 @@ function CustomPermPanel({
         </span>
         <button
           onClick={save}
-          className="rounded-md bg-teal px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-deep"
+          disabled={pending}
+          className="rounded-md bg-teal px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-deep disabled:opacity-60 disabled:cursor-wait"
         >
-          Save
+          {pending ? "Saving…" : "Save"}
         </button>
       </div>
     </>
@@ -1410,7 +1423,7 @@ function DefaultValueEditor({
   onClose: () => void;
 }) {
   const [value, setValue] = useState(column.defaultValue ?? "");
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   const supported = ["status", "text", "longtext", "number", "date", "email", "phone"].includes(
     column.type
   );
@@ -1433,7 +1446,7 @@ function DefaultValueEditor({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 w-full max-w-sm animate-rise rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <h2 className="text-lg font-bold text-ink">Default value</h2>
         <p className="mt-0.5 text-sm text-muted">
           Applied to “{column.name}” whenever a new item is added.
@@ -1484,9 +1497,10 @@ function DefaultValueEditor({
             {supported && column.type !== "status" && (
               <button
                 onClick={() => save(value)}
-                className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep"
+                disabled={pending}
+                className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-60 disabled:cursor-wait"
               >
-                Save
+                {pending ? "Saving…" : "Save"}
               </button>
             )}
           </div>
@@ -1516,11 +1530,11 @@ function DescriptionEditor({
   onClose: () => void;
 }) {
   const [text, setText] = useState(initial);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 w-full max-w-sm animate-rise rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <h2 className="text-lg font-bold text-ink">Column description</h2>
         <p className="mt-0.5 text-sm text-muted">
           Shown as a tooltip on the “{columnName}” header.
@@ -1534,15 +1548,16 @@ function DescriptionEditor({
           className="mt-3 w-full resize-none rounded-lg border border-hair px-3 py-2 text-sm outline-none focus:border-teal"
         />
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">Cancel</button>
+          <button onClick={onClose} disabled={pending} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas disabled:opacity-60">Cancel</button>
           <button
             onClick={() => {
               start(() => void setColumnDescription(boardId, columnId, text));
               onClose();
             }}
-            className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep"
+            disabled={pending}
+            className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-60 disabled:cursor-wait"
           >
-            Save
+            {pending ? "Saving…" : "Save"}
           </button>
         </div>
       </div>
@@ -1562,7 +1577,7 @@ function LabelEditor({
   onClose: () => void;
 }) {
   const [labels, setLabels] = useState<StatusLabel[]>(initial.length ? initial : []);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   const update = (i: number, patch: Partial<StatusLabel>) =>
     setLabels((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
@@ -1579,7 +1594,7 @@ function LabelEditor({
   return createPortal(
     <div className="fixed inset-0 z-[60] grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 flex max-h-[88vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-hair bg-white shadow-pop">
+      <div className="relative z-10 flex max-h-[88vh] w-full max-w-md animate-rise flex-col overflow-hidden rounded-2xl border border-hair bg-white shadow-pop">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-hair px-5 py-4">
           <div>
@@ -1649,14 +1664,15 @@ function LabelEditor({
         <div className="flex items-center justify-between border-t border-hair px-5 py-3">
           <span className="text-xs text-muted">{labels.length} label{labels.length === 1 ? "" : "s"}</span>
           <div className="flex gap-2">
-            <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">
+            <button onClick={onClose} disabled={pending} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas disabled:opacity-60">
               Cancel
             </button>
             <button
               onClick={save}
-              className="rounded-lg bg-teal px-5 py-2 text-sm font-semibold text-white hover:bg-teal-deep"
+              disabled={pending}
+              className="rounded-lg bg-teal px-5 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-60 disabled:cursor-wait"
             >
-              Save labels
+              {pending ? "Saving…" : "Save labels"}
             </button>
           </div>
         </div>

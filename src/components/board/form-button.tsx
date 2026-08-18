@@ -23,7 +23,7 @@ export function FormButton({
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<FormLite | null>(null);
   const router = useRouter();
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   const liveCount = forms.filter((f) => f.enabled).length;
 
   // Open the forms panel when the parent bumps openSignal (skip initial 0).
@@ -52,7 +52,7 @@ export function FormButton({
       {open && !editing && (
         <div className="fixed inset-0 z-50 grid place-items-center p-4">
           <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={() => setOpen(false)} />
-          <div className="relative z-10 flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-hair bg-white shadow-pop">
+          <div className="relative z-10 flex max-h-[88vh] w-full max-w-lg animate-rise flex-col overflow-hidden rounded-2xl border border-hair bg-white shadow-pop">
             <div className="flex items-center justify-between border-b border-hair px-5 py-4">
               <div>
                 <h2 className="text-base font-bold text-ink">Intake forms</h2>
@@ -75,7 +75,11 @@ export function FormButton({
                       {f.slug && <> · /f/{f.slug}</>}
                     </p>
                   </div>
-                  <button onClick={() => setEditing(f)} className="rounded-lg border border-hair px-3 py-1.5 text-xs font-medium text-ink hover:bg-canvas">
+                  <button
+                    onClick={() => setEditing(f)}
+                    disabled={pending}
+                    className="rounded-lg border border-hair px-3 py-1.5 text-xs font-medium text-ink hover:bg-canvas disabled:opacity-60"
+                  >
                     Edit
                   </button>
                   <button
@@ -86,7 +90,8 @@ export function FormButton({
                           router.refresh();
                         });
                     }}
-                    className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-danger hover:bg-danger/10"
+                    disabled={pending}
+                    className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-60 disabled:cursor-wait"
                   >
                     Delete
                   </button>
@@ -94,9 +99,10 @@ export function FormButton({
               ))}
               <button
                 onClick={newForm}
-                className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-hair py-2.5 text-sm font-medium text-teal hover:border-teal hover:bg-teal/5"
+                disabled={pending}
+                className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-hair py-2.5 text-sm font-medium text-teal hover:border-teal hover:bg-teal/5 disabled:opacity-60 disabled:cursor-wait"
               >
-                <span className="text-base leading-none">＋</span> New form
+                <span className="text-base leading-none">＋</span> {pending ? "Working…" : "New form"}
               </button>
             </div>
           </div>
@@ -148,7 +154,7 @@ function FormEditor({
   const [slugSaved, setSlugSaved] = useState(false);
   const [regen, startRegen] = useTransition();
   const [savingSlug, startSlug] = useTransition();
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   const formCols = columns.filter((c) => FORM_TYPES.includes(c.type));
   const origin = typeof window !== "undefined" ? window.location.origin : "";
@@ -219,10 +225,10 @@ function FormEditor({
   return (
     <div className="fixed inset-0 z-[55] grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-hair bg-white shadow-pop">
+      <div className="relative z-10 flex max-h-[88vh] w-full max-w-lg animate-rise flex-col overflow-hidden rounded-2xl border border-hair bg-white shadow-pop">
         <div className="flex items-center justify-between border-b border-hair px-5 py-4">
           <div className="flex items-center gap-2">
-            <button onClick={onClose} className="text-sm text-muted hover:text-ink">‹ Forms</button>
+            <button onClick={onClose} disabled={pending} className="text-sm text-muted hover:text-ink disabled:opacity-60">‹ Forms</button>
             <h2 className="text-base font-bold text-ink">Edit form</h2>
             <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${enabled ? "bg-teal/10 text-teal-deep" : "bg-canvas text-muted"}`}>
               {enabled ? "● Live" : "Paused"}
@@ -440,9 +446,13 @@ function FormEditor({
         </div>
 
         <div className="flex justify-end gap-2 border-t border-hair px-5 py-3">
-          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">Cancel</button>
-          <button onClick={save} className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep">
-            Save form
+          <button onClick={onClose} disabled={pending} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas disabled:opacity-60">Cancel</button>
+          <button
+            onClick={save}
+            disabled={pending}
+            className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-60 disabled:cursor-wait"
+          >
+            {pending ? "Saving…" : "Save form"}
           </button>
         </div>
       </div>

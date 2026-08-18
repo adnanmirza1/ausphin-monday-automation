@@ -159,7 +159,7 @@ function Kpi({ label, value, accent }: { label: string; value: string; accent: s
 }
 
 function InvoiceCard({ inv, isAdmin }: { inv: Invoice; isAdmin: boolean }) {
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   const acct = ACCOUNTS[inv.account] ?? ACCOUNTS.pty;
   const run = (fn: () => Promise<void>) => start(() => void fn());
 
@@ -198,19 +198,19 @@ function InvoiceCard({ inv, isAdmin }: { inv: Invoice; isAdmin: boolean }) {
         <div className="mt-2.5 flex flex-wrap gap-1.5">
           {inv.status === "requested" && (
             <>
-              <Btn onClick={() => run(() => approveInvoice(inv.id))} kind="primary">Approve</Btn>
-              <Btn onClick={() => run(() => rejectInvoice(inv.id))} kind="ghost">Reject</Btn>
+              <Btn onClick={() => run(() => approveInvoice(inv.id))} kind="primary" disabled={pending}>Approve</Btn>
+              <Btn onClick={() => run(() => rejectInvoice(inv.id))} kind="ghost" disabled={pending}>Reject</Btn>
             </>
           )}
           {inv.status === "approved" && (
-            <Btn onClick={() => run(() => generateInvoice(inv.id))} kind="primary">
-              Generate invoice
+            <Btn onClick={() => run(() => generateInvoice(inv.id))} kind="primary" disabled={pending}>
+              {pending ? "Generating…" : "Generate invoice"}
             </Btn>
           )}
           {inv.status === "invoiced" && (
             <>
-              <Btn onClick={() => run(() => markPaid(inv.id))} kind="primary">Mark paid</Btn>
-              <Btn onClick={() => run(() => markPaidOffline(inv.id))} kind="ghost">Paid offline</Btn>
+              <Btn onClick={() => run(() => markPaid(inv.id))} kind="primary" disabled={pending}>Mark paid</Btn>
+              <Btn onClick={() => run(() => markPaidOffline(inv.id))} kind="ghost" disabled={pending}>Paid offline</Btn>
             </>
           )}
           {inv.status === "paid" && (
@@ -228,18 +228,21 @@ function Btn({
   children,
   onClick,
   kind,
+  disabled = false,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   kind: "primary" | "ghost";
+  disabled?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className={
         kind === "primary"
-          ? "rounded-md bg-teal px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-deep"
-          : "rounded-md border border-hair px-2.5 py-1 text-xs text-muted hover:bg-canvas hover:text-danger"
+          ? "rounded-md bg-teal px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-deep disabled:opacity-60 disabled:cursor-wait"
+          : "rounded-md border border-hair px-2.5 py-1 text-xs text-muted hover:bg-canvas hover:text-danger disabled:opacity-60 disabled:cursor-wait"
       }
     >
       {children}
@@ -257,7 +260,7 @@ function RequestModal({ departments, onClose }: { departments: Dep[]; onClose: (
           start(() => void createInvoiceRequest(fd));
           onClose();
         }}
-        className="relative z-10 w-full max-w-md rounded-2xl border border-hair bg-white p-5 shadow-pop"
+        className="relative z-10 w-full max-w-md animate-rise rounded-2xl border border-hair bg-white p-5 shadow-pop"
       >
         <h2 className="text-lg font-bold text-ink">Request an invoice</h2>
         <p className="mt-0.5 text-sm text-muted">Accounts will verify before it's generated.</p>

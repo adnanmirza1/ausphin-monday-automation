@@ -36,6 +36,7 @@ export function EmployersPanel({
   readOnly: boolean;
 }) {
   const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [, start] = useTransition();
 
   const totals = employers.reduce(
@@ -90,7 +91,14 @@ export function EmployersPanel({
               employer={e}
               isAdmin={isAdmin}
               readOnly={readOnly}
-              onDelete={() => start(() => void deleteEmployer(e.id))}
+              deleting={deletingId === e.id}
+              onDelete={() => {
+                setDeletingId(e.id);
+                start(async () => {
+                  await deleteEmployer(e.id);
+                  setDeletingId(null);
+                });
+              }}
             />
           ))}
         </div>
@@ -117,14 +125,16 @@ function EmployerCard({
   employer,
   isAdmin,
   readOnly,
+  deleting,
   onDelete,
 }: {
   employer: Employer;
   isAdmin: boolean;
   readOnly: boolean;
+  deleting: boolean;
   onDelete: () => void;
 }) {
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   const count = (stage: string) => employer.candidates.filter((c) => c.stage === stage).length;
 
   return (
@@ -139,8 +149,8 @@ function EmployerCard({
           )}
         </div>
         {isAdmin && (
-          <button onClick={onDelete} className="text-xs text-muted hover:text-danger">
-            Delete
+          <button onClick={onDelete} disabled={deleting} className="text-xs text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait">
+            {deleting ? "Deleting…" : "Delete"}
           </button>
         )}
       </div>
@@ -183,7 +193,8 @@ function EmployerCard({
                 <select
                   value={c.stage}
                   onChange={(e) => start(() => void setTagStage(c.boardId, c.tagId, e.target.value))}
-                  className="rounded-md border border-hair px-1.5 py-1 text-xs outline-none focus:border-teal"
+                  disabled={pending}
+                  className="rounded-md border border-hair px-1.5 py-1 text-xs outline-none focus:border-teal disabled:opacity-60 disabled:cursor-wait"
                 >
                   {TAG_STAGES.map((s) => (
                     <option key={s} value={s}>{TAG_STAGE_META[s].label}</option>
@@ -191,7 +202,8 @@ function EmployerCard({
                 </select>
                 <button
                   onClick={() => start(() => void untagCandidate(c.boardId, c.tagId))}
-                  className="grid h-6 w-6 place-items-center rounded text-muted hover:bg-danger/10 hover:text-danger"
+                  disabled={pending}
+                  className="grid h-6 w-6 place-items-center rounded text-muted hover:bg-danger/10 hover:text-danger disabled:opacity-60 disabled:cursor-wait"
                   title="Remove"
                 >
                   ✕
@@ -215,7 +227,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           start(() => void createEmployer(fd));
           onClose();
         }}
-        className="relative z-10 w-full max-w-md rounded-2xl border border-hair bg-white p-5 shadow-pop"
+        className="relative z-10 w-full max-w-md animate-rise rounded-2xl border border-hair bg-white p-5 shadow-pop"
       >
         <h2 className="text-lg font-bold text-ink">Add employer</h2>
         <div className="mt-4 grid gap-3">

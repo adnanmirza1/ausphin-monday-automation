@@ -42,7 +42,7 @@ export function RemindersPanel({
 }) {
   const [creating, setCreating] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   function runNow() {
     start(async () => {
@@ -77,13 +77,14 @@ export function RemindersPanel({
             </Link>
             <button
               onClick={runNow}
-              className="rounded-lg border border-hair px-3 py-1.5 text-xs font-medium text-body hover:bg-canvas"
+              disabled={pending}
+              className="rounded-lg border border-hair px-3 py-1.5 text-xs font-medium text-body hover:bg-canvas disabled:opacity-60 disabled:cursor-wait"
             >
-              ▶ Run now
+              {pending ? "Running…" : "▶ Run now"}
             </button>
             <button
               onClick={() => setCreating(true)}
-              disabled={dateColumns.length === 0}
+              disabled={dateColumns.length === 0 || pending}
               className="rounded-lg bg-teal px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
               title={dateColumns.length === 0 ? "Add a date column first" : ""}
             >
@@ -138,11 +139,13 @@ export function RemindersPanel({
                     <div className="flex flex-none items-center gap-2">
                       <Toggle
                         on={r.enabled}
+                        disabled={pending}
                         onChange={(v) => start(() => void toggleReminderRule(boardId, r.id, v))}
                       />
                       <button
                         onClick={() => start(() => void deleteReminderRule(boardId, r.id))}
-                        className="text-xs text-muted hover:text-danger"
+                        disabled={pending}
+                        className="text-xs text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait"
                       >
                         Delete
                       </button>
@@ -204,11 +207,20 @@ export function RemindersPanel({
   );
 }
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+function Toggle({
+  on,
+  onChange,
+  disabled = false,
+}: {
+  on: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       onClick={() => onChange(!on)}
-      className={`relative h-5 w-9 rounded-full transition ${on ? "bg-teal" : "bg-hair"}`}
+      disabled={disabled}
+      className={`relative h-5 w-9 rounded-full transition disabled:cursor-wait disabled:opacity-60 ${on ? "bg-teal" : "bg-hair"}`}
       role="switch"
       aria-checked={on}
     >
@@ -247,7 +259,7 @@ function CreateModal({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 w-full max-w-md animate-rise rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <h2 className="text-lg font-bold text-ink">New reminder</h2>
         <p className="mt-0.5 text-sm text-muted">Notify before a date arrives.</p>
 

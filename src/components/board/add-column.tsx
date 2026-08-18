@@ -26,7 +26,7 @@ export function AddColumnButton({
   const [targetBoardId, setTargetBoardId] = useState(allBoards[0]?.id ?? "");
   const [connColId, setConnColId] = useState(connectionColumns[0]?.id ?? "");
   const [sourceColId, setSourceColId] = useState("");
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   const mirrorSource = connectionColumns.find((c) => c.id === connColId);
   const mirrorSourceCols = mirrorSource?.targetBoardId
@@ -162,14 +162,19 @@ export function AddColumnButton({
       )}
 
       <div className="flex justify-end gap-2">
-        <button onClick={() => setOpen(false)} className="rounded-lg px-3 py-1.5 text-xs text-muted hover:bg-canvas">
+        <button
+          onClick={() => setOpen(false)}
+          disabled={pending}
+          className="rounded-lg px-3 py-1.5 text-xs text-muted hover:bg-canvas disabled:opacity-60"
+        >
           Cancel
         </button>
         <button
           onClick={submit}
-          className="rounded-lg bg-teal px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-deep"
+          disabled={pending || !name.trim()}
+          className="rounded-lg bg-teal px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-deep disabled:opacity-60 disabled:cursor-wait"
         >
-          Add column
+          {pending ? "Adding…" : "Add column"}
         </button>
       </div>
     </DropdownMenu>

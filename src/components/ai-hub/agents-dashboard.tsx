@@ -36,6 +36,7 @@ export function AgentsDashboard({
   const [list, setList] = useState(agents);
   const [creating, setCreating] = useState(false);
   const [runningAgent, setRunningAgent] = useState<AgentRow | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [, start] = useTransition();
 
   function refresh(next: AgentRow[]) {
@@ -99,15 +100,18 @@ export function AgentsDashboard({
                   </button>
                   {canManage && (
                     <button
-                      onClick={() =>
+                      onClick={() => {
+                        setDeletingId(a.id);
                         start(async () => {
                           await deleteAgent(a.id);
                           refresh(list.filter((x) => x.id !== a.id));
-                        })
-                      }
-                      className="rounded-lg border border-hair px-3 py-1.5 text-xs text-muted hover:bg-canvas"
+                          setDeletingId(null);
+                        });
+                      }}
+                      disabled={deletingId === a.id}
+                      className="rounded-lg border border-hair px-3 py-1.5 text-xs text-muted hover:bg-canvas disabled:opacity-60 disabled:cursor-wait"
                     >
-                      Delete
+                      {deletingId === a.id ? "Deleting…" : "Delete"}
                     </button>
                   )}
                 </div>
@@ -152,7 +156,7 @@ function CreateAgentModal({
   const [goal, setGoal] = useState("");
   const [tools, setTools] = useState<string[]>([]);
   const [requireApproval, setRequireApproval] = useState(true);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   function toggle(t: string) {
     setTools((list) => (list.includes(t) ? list.filter((x) => x !== t) : [...list, t]));
@@ -169,7 +173,7 @@ function CreateAgentModal({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 w-full max-w-md animate-rise rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <h2 className="text-lg font-bold text-ink">New agent</h2>
         <div className="mt-4 grid gap-3">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Agent name" className="rounded-lg border border-hair px-3 py-2 text-sm outline-none focus:border-teal" />
@@ -191,9 +195,13 @@ function CreateAgentModal({
           </label>
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">Cancel</button>
-          <button onClick={save} disabled={!name.trim() || tools.length === 0} className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50">
-            Create
+          <button onClick={onClose} disabled={pending} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas disabled:opacity-60">Cancel</button>
+          <button
+            onClick={save}
+            disabled={!name.trim() || tools.length === 0 || pending}
+            className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50 disabled:cursor-wait"
+          >
+            {pending ? "Creating…" : "Create"}
           </button>
         </div>
       </div>
@@ -239,7 +247,7 @@ function RunAgentModal({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 flex max-h-[85vh] w-full max-w-lg animate-rise flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <h2 className="text-lg font-bold text-ink">Run “{agent.name}”</h2>
 
         <div className="mt-4 grid gap-3 overflow-y-auto scroll-thin pr-0.5">

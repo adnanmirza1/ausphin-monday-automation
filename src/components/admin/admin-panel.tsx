@@ -157,8 +157,9 @@ function AvatarUpload({ user }: { user: UserRow }) {
         <button
           type="button"
           onClick={() => start(() => void setUserAvatar(user.id, null))}
+          disabled={busy}
           title="Remove photo"
-          className="absolute -right-1 -top-1 hidden h-4 w-4 place-items-center rounded-full bg-white text-[9px] text-danger shadow group-hover/av:grid"
+          className="absolute -right-1 -top-1 hidden h-4 w-4 place-items-center rounded-full bg-white text-[9px] text-danger shadow group-hover/av:grid disabled:opacity-60"
         >
           ✕
         </button>
@@ -180,7 +181,7 @@ function UsersTab({
   departments: Dept[];
   currentUserId: string;
 }) {
-  const [userMsg, userAction] = useActionState(createUser, null);
+  const [userMsg, userAction, userPending] = useActionState(createUser, null);
   return (
     <div className="max-w-5xl">
       <Card>
@@ -207,7 +208,9 @@ function UsersTab({
               ))}
             </select>
           </Field>
-          <button className={btnPrimary}>Add user</button>
+          <button disabled={userPending} className={`${btnPrimary} disabled:opacity-60 disabled:cursor-wait`}>
+            {userPending ? "Adding…" : "Add user"}
+          </button>
         </form>
         {userMsg && <p className="mt-2 text-sm text-danger">{userMsg}</p>}
       </Card>
@@ -259,7 +262,7 @@ function UserRow({
   const [name, setName] = useState(u.name);
   const [email, setEmail] = useState(u.email);
   const [err, setErr] = useState<string | null>(null);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   return (
     <tr className="border-b border-hair last:border-0">
@@ -284,7 +287,8 @@ function UserRow({
         <select
           value={u.roleId ?? ""}
           onChange={(e) => start(() => void setUserRole(u.id, e.target.value || null))}
-          className={selCls}
+          disabled={pending}
+          className={`${selCls} disabled:opacity-60 disabled:cursor-wait`}
         >
           <option value="">—</option>
           {roles.map((r) => (
@@ -296,7 +300,8 @@ function UserRow({
         <select
           value={u.departmentId ?? ""}
           onChange={(e) => start(() => void setUserDepartment(u.id, e.target.value || null))}
-          className={selCls}
+          disabled={pending}
+          className={`${selCls} disabled:opacity-60 disabled:cursor-wait`}
         >
           <option value="">—</option>
           {departments.map((d) => (
@@ -308,7 +313,8 @@ function UserRow({
         <select
           value={u.status}
           onChange={(e) => start(() => void setUserStatus(u.id, e.target.value))}
-          className={selCls}
+          disabled={pending}
+          className={`${selCls} disabled:opacity-60 disabled:cursor-wait`}
           style={{ color: USER_STATUS_META[u.status as keyof typeof USER_STATUS_META]?.color }}
         >
           {USER_STATUSES.map((s) => (
@@ -327,24 +333,30 @@ function UserRow({
                   else { setErr(null); setEditing(false); }
                 })
               }
-              className="text-xs font-semibold text-teal hover:underline"
+              disabled={pending}
+              className="text-xs font-semibold text-teal hover:underline disabled:opacity-60 disabled:cursor-wait"
             >
-              Save
+              {pending ? "Saving…" : "Save"}
             </button>
-            <button onClick={() => { setEditing(false); setErr(null); setName(u.name); setEmail(u.email); }} className="text-xs text-muted hover:text-body">
+            <button
+              onClick={() => { setEditing(false); setErr(null); setName(u.name); setEmail(u.email); }}
+              disabled={pending}
+              className="text-xs text-muted hover:text-body disabled:opacity-60"
+            >
               Cancel
             </button>
           </div>
         ) : (
           <div className="flex gap-3">
-            <button onClick={() => setEditing(true)} className="text-xs text-teal hover:underline">Edit</button>
+            <button onClick={() => setEditing(true)} disabled={pending} className="text-xs text-teal hover:underline disabled:opacity-60">Edit</button>
             {!isSelf && (
               <button
                 onClick={() => {
                   if (confirm(`Delete ${u.name}? This can't be undone. (Tip: set to Viewer to keep their history.)`))
                     start(() => void deleteUser(u.id));
                 }}
-                className="text-xs text-muted hover:text-danger"
+                disabled={pending}
+                className="text-xs text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait"
               >
                 Delete
               </button>
@@ -358,7 +370,7 @@ function UserRow({
 
 /* ── Roles ─────────────────────────────────────────── */
 function RolesTab({ roles, boards }: { roles: Role[]; boards: BoardLite[] }) {
-  const [roleMsg, roleAction] = useActionState(addRole, null);
+  const [roleMsg, roleAction, rolePending] = useActionState(addRole, null);
   return (
     <div className="max-w-3xl">
       <Card>
@@ -373,7 +385,9 @@ function RolesTab({ roles, boards }: { roles: Role[]; boards: BoardLite[] }) {
             <label className="flex items-center gap-2 pb-2 text-sm text-body">
               <input name="readOnly" type="checkbox" /> Read-only
             </label>
-            <button className={btnPrimary}>Add role</button>
+            <button disabled={rolePending} className={`${btnPrimary} disabled:opacity-60 disabled:cursor-wait`}>
+              {rolePending ? "Adding…" : "Add role"}
+            </button>
           </div>
           <div>
             <p className="mb-1 text-xs font-semibold text-body">
@@ -406,7 +420,7 @@ function RoleCard({ role, boards }: { role: Role; boards: BoardLite[] }) {
   const [color, setColor] = useState(role.color);
   const [readOnly, setReadOnly] = useState(role.readOnly);
   const [sel, setSel] = useState<string[]>(role.boards === "all" ? [] : role.boards);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   function toggle(id: string) {
     setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -437,13 +451,14 @@ function RoleCard({ role, boards }: { role: Role; boards: BoardLite[] }) {
           </>
         )}
         <div className="mt-2 flex justify-end gap-2">
-          <button onClick={() => setEditing(false)} className="text-xs text-muted hover:text-body">Cancel</button>
+          <button onClick={() => setEditing(false)} disabled={pending} className="text-xs text-muted hover:text-body disabled:opacity-60">Cancel</button>
           <button
             onClick={() => {
               start(() => void editRole(role.id, name, color, readOnly, sel));
               setEditing(false);
             }}
-            className="rounded-md bg-teal px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-deep"
+            disabled={pending}
+            className="rounded-md bg-teal px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-deep disabled:opacity-60 disabled:cursor-wait"
           >
             Save
           </button>
@@ -468,9 +483,13 @@ function RoleCard({ role, boards }: { role: Role; boards: BoardLite[] }) {
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <button onClick={() => setEditing(true)} className="text-xs text-teal hover:underline">Edit</button>
+        <button onClick={() => setEditing(true)} disabled={pending} className="text-xs text-teal hover:underline disabled:opacity-60">Edit</button>
         {!role.isSystem && (
-          <button onClick={() => start(() => void deleteRole(role.id))} className="text-xs text-muted hover:text-danger">
+          <button
+            onClick={() => start(() => void deleteRole(role.id))}
+            disabled={pending}
+            className="text-xs text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait"
+          >
             Delete
           </button>
         )}
@@ -481,7 +500,7 @@ function RoleCard({ role, boards }: { role: Role; boards: BoardLite[] }) {
 
 /* ── Departments ───────────────────────────────────── */
 function DepartmentsTab({ departments }: { departments: Dept[] }) {
-  const [deptMsg, deptAction] = useActionState(addDepartment, null);
+  const [deptMsg, deptAction, deptPending] = useActionState(addDepartment, null);
   return (
     <div className="max-w-3xl">
       <Card>
@@ -492,7 +511,9 @@ function DepartmentsTab({ departments }: { departments: Dept[] }) {
           <Field label="Color">
             <input name="color" type="color" defaultValue="#0B7A6F" className="h-9 w-14 rounded border border-hair" />
           </Field>
-          <button className={btnPrimary}>Add department</button>
+          <button disabled={deptPending} className={`${btnPrimary} disabled:opacity-60 disabled:cursor-wait`}>
+            {deptPending ? "Adding…" : "Add department"}
+          </button>
         </form>
         {deptMsg && <p className="mt-2 text-sm text-danger">{deptMsg}</p>}
       </Card>
@@ -510,7 +531,7 @@ function DeptChip({ dept }: { dept: Dept }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(dept.name);
   const [color, setColor] = useState(dept.color);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   if (editing) {
     return (
@@ -522,7 +543,8 @@ function DeptChip({ dept }: { dept: Dept }) {
             start(() => void editDepartment(dept.id, name, color));
             setEditing(false);
           }}
-          className="rounded-full bg-teal px-2 py-0.5 text-xs font-semibold text-white"
+          disabled={pending}
+          className="rounded-full bg-teal px-2 py-0.5 text-xs font-semibold text-white disabled:opacity-60 disabled:cursor-wait"
         >
           Save
         </button>
@@ -534,10 +556,11 @@ function DeptChip({ dept }: { dept: Dept }) {
     <div className="flex items-center gap-2 rounded-full border border-hair bg-white py-1.5 pl-3 pr-2 text-sm">
       <span className="h-2.5 w-2.5 rounded-full" style={{ background: dept.color }} />
       <span className="text-body">{dept.name}</span>
-      <button onClick={() => setEditing(true)} className="text-xs text-teal hover:underline">edit</button>
+      <button onClick={() => setEditing(true)} disabled={pending} className="text-xs text-teal hover:underline disabled:opacity-60">edit</button>
       <button
         onClick={() => start(() => void deleteDepartment(dept.id))}
-        className="grid h-5 w-5 place-items-center rounded-full text-muted hover:bg-danger/10 hover:text-danger"
+        disabled={pending}
+        className="grid h-5 w-5 place-items-center rounded-full text-muted hover:bg-danger/10 hover:text-danger disabled:opacity-60 disabled:cursor-wait"
       >
         ✕
       </button>
@@ -547,7 +570,7 @@ function DeptChip({ dept }: { dept: Dept }) {
 
 /* ── Invitations ───────────────────────────────────── */
 function InvitesTab({ invitations, roles }: { invitations: Invite[]; roles: Role[] }) {
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   return (
     <div className="max-w-3xl">
       <Card>
@@ -566,7 +589,9 @@ function InvitesTab({ invitations, roles }: { invitations: Invite[]; roles: Role
               ))}
             </select>
           </Field>
-          <button className={btnPrimary}>Send invite</button>
+          <button disabled={pending} className={`${btnPrimary} disabled:opacity-60 disabled:cursor-wait`}>
+            {pending ? "Sending…" : "Send invite"}
+          </button>
         </form>
       </Card>
 
@@ -588,7 +613,8 @@ function InvitesTab({ invitations, roles }: { invitations: Invite[]; roles: Role
                 {i.status === "pending" && (
                   <button
                     onClick={() => start(() => void revokeInvitation(i.id))}
-                    className="text-xs text-muted hover:text-danger"
+                    disabled={pending}
+                    className="text-xs text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait"
                   >
                     Revoke
                   </button>

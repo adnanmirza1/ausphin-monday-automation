@@ -414,7 +414,7 @@ function AutomationCard({
   onDropBefore: () => void;
   dragActive: boolean;
 }) {
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   const [over, setOver] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const { when, then } = describe(auto.trigger, auto.action, columns, groups, departments, templates);
@@ -464,19 +464,29 @@ function AutomationCard({
       <div className="flex flex-none items-center gap-3">
         <Toggle
           on={auto.enabled}
+          disabled={pending}
           onChange={(v) => start(() => void toggleAutomation(boardId, auto.id, v))}
         />
-        <button onClick={() => setHistoryOpen(true)} className="text-xs text-muted hover:text-teal">
+        <button
+          onClick={() => setHistoryOpen(true)}
+          disabled={pending}
+          className="text-xs text-muted hover:text-teal disabled:opacity-60"
+        >
           History
         </button>
-        <button onClick={onEdit} className="text-xs text-teal hover:underline">
+        <button
+          onClick={onEdit}
+          disabled={pending}
+          className="text-xs text-teal hover:underline disabled:opacity-60"
+        >
           Edit
         </button>
         <button
           onClick={() => start(() => void deleteAutomation(boardId, auto.id))}
-          className="text-xs text-muted hover:text-danger"
+          disabled={pending}
+          className="text-xs text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait"
         >
-          Delete
+          {pending ? "…" : "Delete"}
         </button>
       </div>
       {historyOpen && (
@@ -577,11 +587,22 @@ function AutomationHistoryPanel({
   );
 }
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+function Toggle({
+  on,
+  onChange,
+  disabled = false,
+}: {
+  on: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       onClick={() => onChange(!on)}
-      className={`relative h-5 w-9 rounded-full transition ${on ? "bg-teal" : "bg-hair"}`}
+      disabled={disabled}
+      className={`relative h-5 w-9 rounded-full transition disabled:cursor-wait disabled:opacity-60 ${
+        on ? "bg-teal" : "bg-hair"
+      }`}
       role="switch"
       aria-checked={on}
     >
@@ -844,7 +865,7 @@ function CreateModal({
   const [name, setName] = useState(existing?.name ?? "");
   const [folder, setFolder] = useState(existing?.folder || "General");
   const [newFolder, setNewFolder] = useState(false);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   // trigger state
   const [tType, setTType] = useState<
@@ -926,7 +947,7 @@ function CreateModal({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 flex max-h-[90vh] w-full max-w-lg animate-rise flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <h2 className="text-lg font-bold text-ink">{existing ? "Edit automation" : "New automation"}</h2>
         <p className="mt-0.5 text-sm text-muted">Define a trigger and one or more actions.</p>
 
@@ -1119,15 +1140,19 @@ function CreateModal({
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">
+          <button
+            onClick={onClose}
+            disabled={pending}
+            className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas disabled:opacity-60"
+          >
             Cancel
           </button>
           <button
             onClick={build}
-            disabled={!name.trim()}
-            className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
+            disabled={!name.trim() || pending}
+            className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50 disabled:cursor-wait"
           >
-            {existing ? "Save changes" : "Create automation"}
+            {pending ? "Saving…" : existing ? "Save changes" : "Create automation"}
           </button>
         </div>
       </div>

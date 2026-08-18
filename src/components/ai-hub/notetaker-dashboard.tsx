@@ -156,7 +156,8 @@ export function NotetakerDashboard({
                           setList((l) => l.filter((x) => x.id !== s.id));
                         })
                       }
-                      className="flex-none text-xs text-muted hover:text-danger"
+                      disabled={pending}
+                      className="flex-none text-xs text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait"
                     >
                       Delete
                     </button>

@@ -171,7 +171,7 @@ function ImportModal({ board, onClose }: { board: BoardData; onClose: () => void
   const [mapping, setMapping] = useState<string[]>([]);
   const [groupId, setGroupId] = useState(board.groups[0]?.id ?? "");
   const [done, setDone] = useState<{ created: number; createdAsSubitems: number } | null>(null);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   // Common ingest: take a matrix of rows, set header + rows + auto-mapping.
   function ingest(parsed: string[][]) {
@@ -227,7 +227,7 @@ function ImportModal({ board, onClose }: { board: BoardData; onClose: () => void
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-hair bg-white shadow-pop">
+      <div className="relative z-10 flex max-h-[88vh] w-full max-w-lg animate-rise flex-col overflow-hidden rounded-2xl border border-hair bg-white shadow-pop">
         <div className="flex items-center justify-between border-b border-hair px-5 py-4">
           <h2 className="text-base font-bold text-ink">Import from CSV / Excel</h2>
           <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-muted hover:bg-canvas">✕</button>
@@ -302,15 +302,20 @@ function ImportModal({ board, onClose }: { board: BoardData; onClose: () => void
         </div>
 
         <div className="flex justify-end gap-2 border-t border-hair px-5 py-3">
-          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">
+          <button
+            onClick={onClose}
+            disabled={pending}
+            className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas disabled:opacity-60"
+          >
             {done !== null ? "Done" : "Cancel"}
           </button>
           {rows && done === null && (
             <button
               onClick={runImport}
-              className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep"
+              disabled={pending}
+              className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-60 disabled:cursor-wait"
             >
-              Import {rows.length} rows
+              {pending ? "Importing…" : `Import ${rows.length} rows`}
             </button>
           )}
         </div>

@@ -155,7 +155,7 @@ function ItemPanel({
   const [subitems, setSubitems] = useState<SubitemRow[] | null>(null);
   const [parentItem, setParentItem] = useState<ParentItemRow>(null);
   const [newSubitem, setNewSubitem] = useState("");
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   const { open } = useBoardUI();
 
   function refreshSubitems() {
@@ -307,10 +307,11 @@ function ItemPanel({
                     setParentItem(null);
                   })
                 }
-                className="flex-none text-xs font-medium text-teal hover:underline"
+                disabled={pending}
+                className="flex-none text-xs font-medium text-teal hover:underline disabled:opacity-60 disabled:cursor-wait"
                 title="Detach from parent — keeps this item's data, makes it a normal item"
               >
-                Detach
+                {pending ? "…" : "Detach"}
               </button>
             </div>
           )}
@@ -338,14 +339,16 @@ function ItemPanel({
                     <div className="flex flex-none items-center gap-2">
                       <button
                         onClick={() => open({ id: s.id, name: s.name })}
-                        className="text-xs text-muted hover:text-teal"
+                        disabled={pending}
+                        className="text-xs text-muted hover:text-teal disabled:opacity-60"
                         title="Open subitem"
                       >
                         open ↗
                       </button>
                       <button
                         onClick={() => removeSub(s.id, s.name)}
-                        className="text-xs text-muted hover:text-danger"
+                        disabled={pending}
+                        className="text-xs text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait"
                         title="Delete subitem"
                       >
                         ✕
@@ -365,10 +368,10 @@ function ItemPanel({
               />
               <button
                 onClick={addSub}
-                disabled={!newSubitem.trim()}
-                className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
+                disabled={!newSubitem.trim() || pending}
+                className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50 disabled:cursor-wait"
               >
-                Add
+                {pending ? "Adding…" : "Add"}
               </button>
             </div>
           </div>
@@ -395,7 +398,8 @@ function ItemPanel({
                       </span>
                       <button
                         onClick={() => removeTag(t.id)}
-                        className="text-muted hover:text-danger"
+                        disabled={pending}
+                        className="text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait"
                         title="Remove"
                       >
                         ✕
@@ -431,9 +435,10 @@ function ItemPanel({
                 </select>
                 <button
                   onClick={addTag}
-                  className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep"
+                  disabled={pending}
+                  className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-60 disabled:cursor-wait"
                 >
-                  Tag
+                  {pending ? "Tagging…" : "Tag"}
                 </button>
               </div>
             )}
@@ -448,13 +453,15 @@ function ItemPanel({
               <span className="text-xs text-muted">Request invoice:</span>
               <button
                 onClick={() => requestInvoice("pty")}
-                className="rounded-lg border border-hair px-2.5 py-1 text-xs font-medium text-body hover:bg-canvas"
+                disabled={pending}
+                className="rounded-lg border border-hair px-2.5 py-1 text-xs font-medium text-body hover:bg-canvas disabled:opacity-60 disabled:cursor-wait"
               >
                 Osphine PTY
               </button>
               <button
                 onClick={() => requestInvoice("global")}
-                className="rounded-lg border border-hair px-2.5 py-1 text-xs font-medium text-body hover:bg-canvas"
+                disabled={pending}
+                className="rounded-lg border border-hair px-2.5 py-1 text-xs font-medium text-body hover:bg-canvas disabled:opacity-60 disabled:cursor-wait"
               >
                 Osphine Global
               </button>
@@ -484,9 +491,10 @@ function ItemPanel({
                 </select>
                 <button
                   onClick={generate}
-                  className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep"
+                  disabled={pending}
+                  className="rounded-lg bg-teal px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-60 disabled:cursor-wait"
                 >
-                  Generate
+                  {pending ? "Generating…" : "Generate"}
                 </button>
               </div>
             )}
@@ -521,10 +529,11 @@ function ItemPanel({
                             setTimeout(() => setSignMsg(null), 4000);
                           })
                         }
-                        className="text-xs font-medium text-teal hover:underline"
+                        disabled={pending}
+                        className="text-xs font-medium text-teal hover:underline disabled:opacity-60 disabled:cursor-wait"
                         title="Send to candidate for e-signature (DocuSign)"
                       >
-                        ✍ e-sign
+                        {pending ? "…" : "✍ e-sign"}
                       </button>
                     </div>
                   </div>
@@ -719,10 +728,10 @@ function ItemPanel({
           </div>
           <button
             onClick={post}
-            disabled={!body.trim()}
-            className="mt-2 w-full rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
+            disabled={!body.trim() || pending}
+            className="mt-2 w-full rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50 disabled:cursor-wait"
           >
-            Post update
+            {pending ? "Posting…" : "Post update"}
           </button>
         </div>
       </div>
@@ -898,7 +907,7 @@ function LogEmailModal({
   return (
     <div className="fixed inset-0 z-[70] grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 w-full max-w-md animate-rise rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-bold text-ink">Log a received email</h2>
           <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-muted hover:bg-canvas">
@@ -927,7 +936,7 @@ function LogEmailModal({
           />
         </div>
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">
+          <button onClick={onClose} disabled={pending} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas disabled:opacity-60">
             Cancel
           </button>
           <button

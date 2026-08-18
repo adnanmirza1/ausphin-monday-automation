@@ -29,7 +29,7 @@ export function TrashPanel({
   boards: ArchivedBoard[];
 }) {
   const router = useRouter();
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
   const refresh = () => router.refresh();
   const empty = environments.length === 0 && boards.length === 0;
 
@@ -67,7 +67,8 @@ export function TrashPanel({
                 </div>
                 <button
                   onClick={() => start(async () => { await restoreEnvironment(e.id); refresh(); })}
-                  className="rounded-lg border border-hair px-3 py-1.5 text-sm font-medium text-ink hover:bg-canvas"
+                  disabled={pending}
+                  className="rounded-lg border border-hair px-3 py-1.5 text-sm font-medium text-ink hover:bg-canvas disabled:opacity-60 disabled:cursor-wait"
                 >
                   Restore
                 </button>
@@ -76,7 +77,8 @@ export function TrashPanel({
                     if (confirm(`Permanently delete workspace "${e.name}" and ALL its boards & data? This cannot be undone.`))
                       start(async () => { await deleteEnvironment(e.id); refresh(); });
                   }}
-                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-danger hover:bg-danger/10"
+                  disabled={pending}
+                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-danger hover:bg-danger/10 disabled:opacity-60 disabled:cursor-wait"
                 >
                   Delete forever
                 </button>
@@ -106,7 +108,8 @@ export function TrashPanel({
                 </div>
                 <button
                   onClick={() => start(async () => { await restoreBoard(b.id); refresh(); })}
-                  className="rounded-lg border border-hair px-3 py-1.5 text-sm font-medium text-ink hover:bg-canvas"
+                  disabled={pending}
+                  className="rounded-lg border border-hair px-3 py-1.5 text-sm font-medium text-ink hover:bg-canvas disabled:opacity-60 disabled:cursor-wait"
                 >
                   Restore
                 </button>
@@ -115,7 +118,8 @@ export function TrashPanel({
                     if (confirm(`Permanently delete board "${b.name}" and ALL its data? This cannot be undone.`))
                       start(async () => { await deleteBoard(b.id); refresh(); });
                   }}
-                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-danger hover:bg-danger/10"
+                  disabled={pending}
+                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-danger hover:bg-danger/10 disabled:opacity-60 disabled:cursor-wait"
                 >
                   Delete forever
                 </button>

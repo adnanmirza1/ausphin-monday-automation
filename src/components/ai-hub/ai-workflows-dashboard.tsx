@@ -253,7 +253,7 @@ function WorkflowBuilderModal({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 flex max-h-[85vh] w-full max-w-lg animate-rise flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <h2 className="text-lg font-bold text-ink">Build workflow</h2>
         <p className="mt-0.5 text-sm text-muted">on board “{boardLabel}”</p>
 
@@ -292,15 +292,15 @@ function WorkflowBuilderModal({
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">
+          <button onClick={onClose} disabled={pending} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas disabled:opacity-60">
             Cancel
           </button>
           <button
             onClick={save}
             disabled={!preview || pending}
-            className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
+            className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50 disabled:cursor-wait"
           >
-            Save workflow
+            {pending && preview ? "Saving…" : "Save workflow"}
           </button>
         </div>
       </div>

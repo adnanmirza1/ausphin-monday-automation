@@ -183,7 +183,7 @@ export function BoardView({
   const [colorBy, setColorBy] = useState<string | null>(null);
   const [pinFirst, setPinFirst] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   function selectView(id: string) {
     setActiveId(id);
@@ -494,7 +494,8 @@ export function BoardView({
                 </button>
                 <button
                   onClick={() => start(() => void pinView(board.id, active.id, !active.isPinned))}
-                  className="rounded-md px-2 py-1 text-xs text-muted hover:text-teal"
+                  disabled={pending}
+                  className="rounded-md px-2 py-1 text-xs text-muted hover:text-teal disabled:opacity-60"
                 >
                   {active.isPinned ? "Unpin" : "📌 Pin"}
                 </button>
@@ -505,9 +506,10 @@ export function BoardView({
                       selectView("main");
                     }
                   }}
-                  className="rounded-md px-2 py-1 text-xs text-muted hover:text-danger"
+                  disabled={pending}
+                  className="rounded-md px-2 py-1 text-xs text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait"
                 >
-                  Delete
+                  {pending ? "…" : "Delete"}
                 </button>
               </div>
             )}
@@ -1031,7 +1033,7 @@ function SaveModal({ onClose, onSave }: { onClose: () => void; onSave: (name: st
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-hair bg-white p-5 shadow-pop">
+      <div className="relative z-10 w-full max-w-sm animate-rise rounded-2xl border border-hair bg-white p-5 shadow-pop">
         <h2 className="text-lg font-bold text-ink">Save view</h2>
         <p className="mt-0.5 text-sm text-muted">Saves current hidden columns + filters.</p>
         <input

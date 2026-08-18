@@ -21,7 +21,7 @@ export function DocsButton({
   const [editing, setEditing] = useState<TemplateLite | null>(null);
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
-  const [, start] = useTransition();
+  const [pending, start] = useTransition();
 
   // The stored token is always {{Item}} (matches renderTemplate's lookup,
   // and stays stable across renames per Improvement 3, req #5) — only the
@@ -60,7 +60,7 @@ export function DocsButton({
       {open && (
         <div className="fixed inset-0 z-50 grid place-items-center p-4">
           <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={() => setOpen(false)} />
-          <div className="relative z-10 flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
+          <div className="relative z-10 flex max-h-[85vh] w-full max-w-2xl animate-rise flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold text-ink">Document templates</h2>
@@ -95,12 +95,17 @@ export function DocsButton({
                         <p className="truncate text-xs text-muted">{t.body.slice(0, 80)}</p>
                       </div>
                       <div className="flex flex-none gap-2">
-                        <button onClick={() => startEdit(t)} className="text-xs text-teal hover:underline">
+                        <button
+                          onClick={() => startEdit(t)}
+                          disabled={pending}
+                          className="text-xs text-teal hover:underline disabled:opacity-60"
+                        >
                           Edit
                         </button>
                         <button
                           onClick={() => start(() => void deleteTemplate(boardId, t.id))}
-                          className="text-xs text-muted hover:text-danger"
+                          disabled={pending}
+                          className="text-xs text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait"
                         >
                           Delete
                         </button>
@@ -137,15 +142,19 @@ export function DocsButton({
                   className="w-full resize-none rounded-lg border border-hair px-3 py-2 font-mono text-sm outline-none focus:border-teal"
                 />
                 <div className="mt-3 flex justify-end gap-2">
-                  <button onClick={() => setEditing(null)} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas">
+                  <button
+                    onClick={() => setEditing(null)}
+                    disabled={pending}
+                    className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-canvas disabled:opacity-60"
+                  >
                     Back
                   </button>
                   <button
                     onClick={save}
-                    disabled={!name.trim()}
-                    className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50"
+                    disabled={!name.trim() || pending}
+                    className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-white hover:bg-teal-deep disabled:opacity-50 disabled:cursor-wait"
                   >
-                    Save template
+                    {pending ? "Saving…" : "Save template"}
                   </button>
                 </div>
               </div>

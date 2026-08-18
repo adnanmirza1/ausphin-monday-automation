@@ -355,7 +355,7 @@ export function BoardDashboard({
         return (
           <div className="fixed inset-0 z-[70] grid place-items-center p-4 sm:p-8">
             <div className="absolute inset-0 bg-ink/50 backdrop-blur-sm" onClick={() => setFullscreenId(null)} />
-            <div className="relative z-10 flex h-[90vh] w-full max-w-6xl flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
+            <div className="relative z-10 flex h-[90vh] w-full max-w-6xl animate-rise flex-col rounded-2xl border border-hair bg-white p-5 shadow-pop">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-base font-bold text-ink">{w.title ?? "Widget"}</h2>
                 <button onClick={() => setFullscreenId(null)} className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-canvas">✕</button>
@@ -479,8 +479,18 @@ function WidgetShell({
                 {!readOnly && <MenuRow icon="⧉" label="Duplicate" onClick={act(onDuplicate)} />}
                 <MenuRow icon="⊟" label="Dock this widget" disabled />
                 <div className="my-1 border-t border-hair" />
-                <MenuRow icon="🖼" label={exporting ? "Exporting…" : "Export as PNG"} onClick={() => { setMenu(false); void exportImage("png"); }} />
-                <MenuRow icon="🖼" label="Export as JPEG" onClick={() => { setMenu(false); void exportImage("jpeg"); }} />
+                <MenuRow
+                  icon="🖼"
+                  label={exporting ? "Exporting…" : "Export as PNG"}
+                  disabled={exporting}
+                  onClick={() => { setMenu(false); void exportImage("png"); }}
+                />
+                <MenuRow
+                  icon="🖼"
+                  label={exporting ? "Exporting…" : "Export as JPEG"}
+                  disabled={exporting}
+                  onClick={() => { setMenu(false); void exportImage("jpeg"); }}
+                />
                 {onExport && <MenuRow icon="⬇" label="Export data (CSV)" onClick={act(onExport)} />}
                 {!readOnly && (onLeft || onRight) && <div className="my-1 border-t border-hair" />}
                 {!readOnly && onLeft && <MenuRow icon="←" label="Move left" onClick={act(onLeft)} />}
