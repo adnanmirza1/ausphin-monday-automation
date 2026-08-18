@@ -3,6 +3,21 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import {
+  Sparkles,
+  Heart,
+  GitFork,
+  Bot,
+  AudioLines,
+  Zap,
+  LayoutGrid,
+  DollarSign,
+  Building2,
+  Settings,
+  Archive,
+  Power,
+  type LucideIcon,
+} from "lucide-react";
 import { logoutAction } from "@/app/actions/auth";
 import { addBoard, sortBoards } from "@/app/actions/board";
 import {
@@ -16,12 +31,22 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { DropdownMenu } from "@/components/ui/popover";
 
 const AI_HUB_ITEMS = [
-  { href: "/ai/sidekick", label: "AI Sidekick" },
-  { href: "/ai/vibe", label: "Vibe" },
-  { href: "/ai/workflows", label: "AI Workflows" },
-  { href: "/ai/agents", label: "AI Agents" },
-  { href: "/ai/notetaker", label: "AI Notetaker" },
+  { href: "/ai/sidekick", label: "AI Sidekick", icon: Sparkles, iconClassName: "text-cyan-400" },
+  { href: "/ai/vibe", label: "Vibe", icon: Heart, iconClassName: "text-pink-500 fill-pink-500" },
+  { href: "/ai/workflows", label: "AI Workflows", icon: GitFork, iconClassName: "text-blue-400" },
+  { href: "/ai/agents", label: "AI Agents", icon: Bot, iconClassName: "text-cyan-400" },
+  { href: "/ai/notetaker", label: "AI Notetaker", icon: AudioLines, iconClassName: "text-violet-400" },
 ] as const;
+
+// Shared icon sizing/alignment so every nav row lines up identically.
+const NAV_ICON_CLASS = "h-[18px] w-[18px] flex-none";
+const NAV_ROW_CLASS = "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors";
+const NAV_ACTIVE_CLASS = "bg-white/10 text-white";
+const NAV_MUTED_CLASS = "text-slate-400 hover:bg-white/5 hover:text-slate-200";
+
+function NavIcon({ icon: Icon, className }: { icon: LucideIcon; className?: string }) {
+  return <Icon className={`${NAV_ICON_CLASS} ${className ?? ""}`} />;
+}
 
 export type NavEnv = {
   id: string;
@@ -73,45 +98,31 @@ export function Sidebar({
         <Link
           href="/dashboard"
           onClick={onNavigate}
-          className={`mb-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
-            pathname === "/dashboard"
-              ? "bg-teal/20 font-medium text-white"
-              : "text-white/70 hover:bg-rail-hover"
-          }`}
+          className={`mb-2 ${NAV_ROW_CLASS} ${pathname === "/dashboard" ? NAV_ACTIVE_CLASS : NAV_MUTED_CLASS}`}
         >
-          <span className="font-mono text-xs">▦</span> Dashboard
+          <NavIcon icon={LayoutGrid} className="text-indigo-400" /> Dashboard
         </Link>
         <Link
           href="/finance"
           onClick={onNavigate}
-          className={`mb-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
-            pathname === "/finance"
-              ? "bg-teal/20 font-medium text-white"
-              : "text-white/70 hover:bg-rail-hover"
-          }`}
+          className={`mb-2 ${NAV_ROW_CLASS} ${pathname === "/finance" ? NAV_ACTIVE_CLASS : NAV_MUTED_CLASS}`}
         >
-          <span className="font-mono text-xs">$</span> Finance
+          <NavIcon icon={DollarSign} className="text-emerald-400" /> Finance
         </Link>
         <Link
           href="/employers"
           onClick={onNavigate}
-          className={`mb-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
-            pathname === "/employers"
-              ? "bg-teal/20 font-medium text-white"
-              : "text-white/70 hover:bg-rail-hover"
-          }`}
+          className={`mb-2 ${NAV_ROW_CLASS} ${pathname === "/employers" ? NAV_ACTIVE_CLASS : NAV_MUTED_CLASS}`}
         >
-          <span className="font-mono text-xs">◈</span> Employers
+          <NavIcon icon={Building2} className="text-orange-400" /> Employers
         </Link>
 
         <div className="mb-2">
           <button
             onClick={() => setAiOpen((v) => !v)}
-            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium ${
-              pathname.startsWith("/ai") ? "bg-teal/20 text-white" : "text-white/70 hover:bg-rail-hover"
-            }`}
+            className={`w-full ${NAV_ROW_CLASS} ${pathname.startsWith("/ai") ? NAV_ACTIVE_CLASS : NAV_MUTED_CLASS}`}
           >
-            <span className="font-mono text-xs">✦</span>
+            <NavIcon icon={Sparkles} className="text-cyan-400" />
             <span className="flex-1 text-left">AI Hub</span>
             <span className="flex-none text-xs text-white/40">{aiOpen ? "▾" : "▸"}</span>
           </button>
@@ -124,10 +135,9 @@ export function Sidebar({
                     key={item.href}
                     href={item.href}
                     onClick={onNavigate}
-                    className={`block truncate rounded-md px-2 py-1.5 text-sm ${
-                      active ? "bg-teal/20 font-medium text-white" : "text-white/70 hover:bg-rail-hover"
-                    }`}
+                    className={`truncate ${NAV_ROW_CLASS} ${active ? NAV_ACTIVE_CLASS : NAV_MUTED_CLASS}`}
                   >
+                    <NavIcon icon={item.icon} className={item.iconClassName} />
                     {item.label}
                   </Link>
                 );
@@ -192,39 +202,27 @@ export function Sidebar({
           <Link
             href="/admin"
             onClick={onNavigate}
-            className={`mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
-              pathname.startsWith("/admin")
-                ? "bg-teal/20 font-medium text-white"
-                : "text-white/70 hover:bg-rail-hover"
-            }`}
+            className={`mb-1 ${NAV_ROW_CLASS} ${pathname.startsWith("/admin") ? NAV_ACTIVE_CLASS : NAV_MUTED_CLASS}`}
           >
-            <span className="font-mono text-xs">⚙</span> Admin Panel
+            <NavIcon icon={Settings} className="text-slate-400" /> Admin Panel
           </Link>
         )}
         {user.canManageUsers && (
           <Link
             href="/settings"
             onClick={onNavigate}
-            className={`mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
-              pathname.startsWith("/settings")
-                ? "bg-teal/20 font-medium text-white"
-                : "text-white/70 hover:bg-rail-hover"
-            }`}
+            className={`mb-1 ${NAV_ROW_CLASS} ${pathname.startsWith("/settings") ? NAV_ACTIVE_CLASS : NAV_MUTED_CLASS}`}
           >
-            <span className="font-mono text-xs">⚡</span> Integrations
+            <NavIcon icon={Zap} className="text-amber-400" /> Integrations
           </Link>
         )}
         {user.canManageEnvironments && (
           <Link
             href="/trash"
             onClick={onNavigate}
-            className={`mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
-              pathname.startsWith("/trash")
-                ? "bg-teal/20 font-medium text-white"
-                : "text-white/70 hover:bg-rail-hover"
-            }`}
+            className={`mb-1 ${NAV_ROW_CLASS} ${pathname.startsWith("/trash") ? NAV_ACTIVE_CLASS : NAV_MUTED_CLASS}`}
           >
-            <span className="font-mono text-xs">🗄</span> Archive / Trash
+            <NavIcon icon={Archive} className="text-slate-400" /> Archive / Trash
           </Link>
         )}
 
@@ -248,10 +246,10 @@ export function Sidebar({
           </div>
           <form action={logoutAction}>
             <button
-              className="rounded-md px-2 py-1 text-xs text-white/50 hover:bg-rail-hover hover:text-white"
+              className="grid h-7 w-7 place-items-center rounded-md text-white/50 hover:bg-rail-hover hover:text-white"
               title="Sign out"
             >
-              ⏻
+              <Power className="h-[18px] w-[18px]" />
             </button>
           </form>
         </div>

@@ -303,14 +303,14 @@ function GroupBlock({
               setDragging(true);
             }}
             onDragEnd={() => setDragging(false)}
-            className="hidden cursor-grab select-none text-muted active:cursor-grabbing group-hover:inline"
+            className="inline cursor-grab select-none text-muted opacity-0 transition-opacity duration-1000 ease-out active:cursor-grabbing group-hover:opacity-100"
             title="Drag to reorder group"
           >
             ⠿
           </span>
         )}
         {!readOnly && (
-          <span className="hidden flex-col leading-none group-hover:flex">
+          <span className="flex flex-col leading-none opacity-0 transition-opacity duration-1000 ease-out group-hover:opacity-100">
             <button
               onClick={() => start(() => void moveGroup(board.id, group.id, "up"))}
               disabled={isFirst}
@@ -403,8 +403,8 @@ function GroupBlock({
                 start(() => void deleteGroup(board.id, group.id));
             }}
             disabled={pending}
-            className={`ml-1 text-xs text-muted hover:text-danger disabled:opacity-60 disabled:cursor-wait ${
-              pending ? "inline" : "hidden group-hover:inline"
+            className={`ml-1 inline text-xs text-muted transition-opacity duration-1000 ease-out hover:text-danger disabled:cursor-wait disabled:opacity-60 ${
+              pending ? "opacity-100" : "opacity-0 group-hover:opacity-100"
             }`}
             title="Delete group"
           >
